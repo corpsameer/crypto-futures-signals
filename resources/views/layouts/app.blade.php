@@ -20,12 +20,23 @@
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="mainNavigation">
-                <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+                <ul class="navbar-nav ms-auto mb-2 mb-lg-0 align-items-lg-center">
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/dashboard">Dashboard</a></li>
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/signals/create">Paste Signal</a></li>
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/signals">Signals</a></li>
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/trades">Simulated Trades</a></li>
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/trader-performance">Trader Performance</a></li>
+                    @auth
+                        <li class="nav-item ms-lg-3">
+                            <span class="navbar-text text-light">{{ auth()->user()->name }}</span>
+                        </li>
+                        <li class="nav-item ms-lg-2">
+                            <form method="POST" action="/cryptofuturesignals/logout">
+                                @csrf
+                                <button type="submit" class="btn btn-outline-light btn-sm">Logout</button>
+                            </form>
+                        </li>
+                    @endauth
                 </ul>
             </div>
         </div>
