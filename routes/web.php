@@ -16,6 +16,8 @@ Route::prefix('cryptofuturesignals')
                 Route::get('/dashboard', DashboardController::class)->name('dashboard');
                 Route::get('/signals/create', [PastedSignalController::class, 'create'])->name('signals.create');
                 Route::post('/signals', [PastedSignalController::class, 'store'])->name('signals.store');
+                Route::get('/signals/{pastedSignal}/preview', [PastedSignalController::class, 'preview'])->name('signals.preview');
+                Route::post('/signals/{pastedSignal}/confirm', [PastedSignalController::class, 'confirm'])->name('signals.confirm');
                 Route::get('/signals', [PastedSignalController::class, 'index'])->name('signals.index');
             });
     });
