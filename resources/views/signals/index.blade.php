@@ -1,5 +1,14 @@
 @extends('layouts.app')
 
+@php
+    $parseStatusBadgeClasses = [
+        \App\Models\PastedSignal::PARSE_STATUS_PENDING => 'text-bg-secondary',
+        \App\Models\PastedSignal::PARSE_STATUS_PARSED => 'text-bg-success',
+        \App\Models\PastedSignal::PARSE_STATUS_FAILED => 'text-bg-danger',
+        \App\Models\PastedSignal::PARSE_STATUS_MANUALLY_CORRECTED => 'text-bg-info',
+    ];
+@endphp
+
 @section('title', 'Pasted Signals | Crypto Futures Signal Analyzer')
 
 @section('content')
@@ -38,7 +47,17 @@
                                     <td>{{ $signal->id }}</td>
                                     <td>{{ $signal->pasted_at?->format('Y-m-d H:i') ?? 'N/A' }}</td>
                                     <td>{{ $signal->trader_name ?: 'N/A' }}</td>
-                                    <td><span class="badge text-bg-secondary">{{ $signal->parse_status }}</span></td>
+                                    <td>
+                                        <span class="badge {{ $parseStatusBadgeClasses[$signal->parse_status] ?? 'text-bg-secondary' }}">
+                                            {{ $signal->parse_status }}
+                                        </span>
+
+                                        @if ($signal->parse_status === \App\Models\PastedSignal::PARSE_STATUS_FAILED && $signal->parse_error)
+                                            <div class="small text-danger mt-1" title="{{ $signal->parse_error }}">
+                                                {{ \Illuminate\Support\Str::limit($signal->parse_error, 80) }}
+                                            </div>
+                                        @endif
+                                    </td>
                                     <td>{{ $signal->source }}</td>
                                     <td class="text-break" style="white-space: pre-line; max-width: 32rem;">{{ \Illuminate\Support\Str::limit($signal->raw_text, 120) }}</td>
                                 </tr>
