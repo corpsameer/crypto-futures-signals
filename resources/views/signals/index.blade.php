@@ -37,8 +37,10 @@
                                 <th scope="col">Pasted At</th>
                                 <th scope="col">Trader</th>
                                 <th scope="col">Parse Status</th>
+                                <th scope="col">Structured Signal Status</th>
                                 <th scope="col">Source</th>
                                 <th scope="col">Raw Text Preview</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -58,8 +60,18 @@
                                             </div>
                                         @endif
                                     </td>
+                                    <td>
+                                        @if ($signal->tradeSignals->isNotEmpty())
+                                            <span class="badge text-bg-success">Saved</span>
+                                        @else
+                                            <span class="badge text-bg-secondary">Not Saved</span>
+                                        @endif
+                                    </td>
                                     <td>{{ $signal->source }}</td>
                                     <td class="text-break" style="white-space: pre-line; max-width: 32rem;">{{ \Illuminate\Support\Str::limit($signal->raw_text, 120) }}</td>
+                                    <td>
+                                        <a href="{{ route('cryptofuturesignals.signals.preview', $signal) }}" class="btn btn-sm btn-outline-primary">Review/Edit</a>
+                                    </td>
                                 </tr>
                             @endforeach
                         </tbody>
