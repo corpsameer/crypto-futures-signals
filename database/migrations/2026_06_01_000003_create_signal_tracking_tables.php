@@ -15,10 +15,10 @@ return new class extends Migration
             Schema::create('pasted_signals', function (Blueprint $table): void {
                 $table->id();
                 $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
-                $table->string('trader_name')->nullable()->index();
+                $table->string('trader_name', 191)->nullable()->index();
                 $table->longText('raw_text');
                 $table->json('parsed_payload')->nullable();
-                $table->string('parse_status')->default('pending')->index();
+                $table->string('parse_status', 191)->default('pending')->index();
                 $table->text('parse_error')->nullable();
                 $table->string('source')->default('manual_paste');
                 $table->timestamp('pasted_at')->nullable()->index();
@@ -33,12 +33,12 @@ return new class extends Migration
                 $table->id();
                 $table->foreignId('pasted_signal_id')->nullable()->constrained()->nullOnDelete();
                 $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
-                $table->string('trader_name')->nullable()->index();
+                $table->string('trader_name', 191)->nullable()->index();
                 $table->string('exchange')->default('coindcx');
-                $table->string('symbol')->index();
+                $table->string('symbol', 191)->index();
                 $table->string('pair')->nullable();
                 $table->string('market_type')->default('futures');
-                $table->string('direction')->index();
+                $table->string('direction', 191)->index();
                 $table->decimal('leverage', 8, 2)->nullable();
                 $table->string('margin_mode')->nullable();
                 $table->decimal('entry_min', 28, 12)->nullable();
@@ -51,7 +51,7 @@ return new class extends Migration
                 $table->decimal('tp4', 28, 12)->nullable();
                 $table->timestamp('signal_time')->nullable()->index();
                 $table->timestamp('expires_at')->nullable()->index();
-                $table->string('status')->default('pending_entry')->index();
+                $table->string('status', 191)->default('pending_entry')->index();
                 $table->text('notes')->nullable();
                 $table->timestamps();
 
@@ -65,8 +65,8 @@ return new class extends Migration
                 $table->id();
                 $table->foreignId('trade_signal_id')->constrained()->cascadeOnDelete();
                 $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
-                $table->string('symbol')->index();
-                $table->string('direction')->index();
+                $table->string('symbol', 191)->index();
+                $table->string('direction', 191)->index();
                 $table->decimal('leverage', 8, 2)->nullable();
                 $table->decimal('entry_price', 28, 12)->nullable();
                 $table->timestamp('entry_triggered_at')->nullable()->index();
@@ -81,7 +81,7 @@ return new class extends Migration
                 $table->decimal('exit_price', 28, 12)->nullable();
                 $table->string('exit_reason')->nullable();
                 $table->timestamp('closed_at')->nullable()->index();
-                $table->string('status')->default('active')->index();
+                $table->string('status', 191)->default('active')->index();
                 $table->timestamp('tracking_until')->nullable()->index();
                 $table->timestamps();
 
@@ -95,7 +95,7 @@ return new class extends Migration
                 $table->id();
                 $table->foreignId('simulated_trade_id')->constrained()->cascadeOnDelete();
                 $table->foreignId('trade_signal_id')->nullable()->constrained()->nullOnDelete();
-                $table->string('event_type')->index();
+                $table->string('event_type', 191)->index();
                 $table->decimal('event_price', 28, 12);
                 $table->decimal('actual_price_move_percent', 12, 4);
                 $table->decimal('leveraged_pnl_percent', 12, 4);
@@ -115,8 +115,8 @@ return new class extends Migration
                 $table->id();
                 $table->foreignId('trade_signal_id')->nullable()->constrained()->nullOnDelete();
                 $table->foreignId('simulated_trade_id')->nullable()->constrained()->nullOnDelete();
-                $table->string('symbol')->index();
-                $table->string('snapshot_type')->nullable()->index();
+                $table->string('symbol', 191)->index();
+                $table->string('snapshot_type', 191)->nullable()->index();
                 $table->decimal('price', 28, 12)->nullable();
                 $table->decimal('volume_24h', 28, 8)->nullable();
                 $table->decimal('price_change_24h_percent', 12, 4)->nullable();
