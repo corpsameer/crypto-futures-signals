@@ -11,7 +11,7 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Authentication can be added here in a future phase.
+        $middleware->redirectGuestsTo('/cryptofuturesignals/login');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Keep default exception handling for the bootstrap phase.
