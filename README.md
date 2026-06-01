@@ -50,13 +50,15 @@ Phase 1 intentionally does **not** include signal tables, a signal parser, Pytho
 
 5. Create a local MySQL database named `crypto_futures_signals`.
 6. Update `.env` if your MySQL username or password differs from the defaults.
-7. Keep the cache driver file-based unless you also create Laravel's optional cache tables:
+7. Keep the framework drivers database-backed for local development:
 
    ```dotenv
-   CACHE_STORE=file
+   SESSION_DRIVER=database
+   CACHE_STORE=database
+   QUEUE_CONNECTION=database
    ```
 
-   This avoids `php artisan optimize:clear` failing against a missing MySQL `cache` table on a fresh install.
+   The standard framework migrations in this repo create the required `sessions`, `cache`, `cache_locks`, `jobs`, `job_batches`, and `failed_jobs` tables.
 
 8. Configure the seeded admin login in `.env` if you do not want to use the example values:
 
@@ -70,6 +72,12 @@ Phase 1 intentionally does **not** include signal tables, a signal parser, Pytho
 
    ```bash
    php artisan migrate
+   ```
+
+   For a clean local reset with no data to keep, you can use:
+
+   ```bash
+   php artisan migrate:fresh
    ```
 
 10. Seed the admin user:
@@ -136,24 +144,40 @@ The project is configured for a separate MySQL database:
 crypto_futures_signals
 ```
 
-The current migration set creates Laravel's standard `users` table for session login accounts. The user email column is limited to 191 characters so its unique index works on older MySQL/MariaDB configurations with a 1000-byte index key limit.
+The current migration set creates Laravel's standard framework tables for auth, password reset tokens, database sessions, database cache, and database queues:
 
+- `users`
+- `password_reset_tokens`
+- `sessions`
+- `cache`
+- `cache_locks`
+- `jobs`
+- `job_batches`
+- `failed_jobs`
+
+Indexed string columns are limited to 191 characters where needed so primary and unique indexes work on older MySQL/MariaDB configurations with a 1000-byte index key limit.
 
 ## Troubleshooting Fresh Setup
 
 ### `php artisan optimize:clear` says the `cache` table does not exist
 
-Set `CACHE_STORE=file` in `.env`, then run:
+Run the framework migrations so the database-backed cache table exists:
+
+```bash
+php artisan migrate
+```
+
+Then rerun:
 
 ```bash
 php artisan optimize:clear
 ```
 
-This project does not use Laravel's database cache tables in Phase 1. If you previously copied an older `.env.example` that had `CACHE_STORE=database`, update your local `.env` manually.
+If you do not have local data to keep, `php artisan migrate:fresh` is also acceptable.
 
 ### `php artisan migrate` fails with `Specified key was too long`
 
-Pull the latest migration change first. The `users.email` column is now `191` characters to support older MySQL/MariaDB index limits. If the failed migration left a partial `users` table behind and you do not have data to keep, drop that partial table and rerun migrations:
+Pull the latest migration changes first. The indexed string columns are now `191` characters where needed to support older MySQL/MariaDB index limits. If the failed migration left a partial `users` table behind and you do not have data to keep, run `php artisan migrate:fresh` or drop that partial table and rerun migrations:
 
 ```sql
 DROP TABLE users;
