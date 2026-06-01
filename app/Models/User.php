@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -43,5 +44,20 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function pastedSignals(): HasMany
+    {
+        return $this->hasMany(PastedSignal::class);
+    }
+
+    public function tradeSignals(): HasMany
+    {
+        return $this->hasMany(TradeSignal::class);
+    }
+
+    public function simulatedTrades(): HasMany
+    {
+        return $this->hasMany(SimulatedTrade::class);
     }
 }
