@@ -11,6 +11,12 @@ class MarketSnapshot extends Model
     /** @use HasFactory<\Database\Factories\MarketSnapshotFactory> */
     use HasFactory;
 
+    public const SNAPSHOT_SIGNAL_RECEIVED = 'signal_received';
+    public const SNAPSHOT_ENTRY_TRIGGERED = 'entry_triggered';
+    public const SNAPSHOT_TP_HIT = 'tp_hit';
+    public const SNAPSHOT_SL_HIT = 'sl_hit';
+    public const SNAPSHOT_PERIODIC = 'periodic';
+
     /**
      * The attributes that are mass assignable.
      *
@@ -31,22 +37,19 @@ class MarketSnapshot extends Model
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'price' => 'decimal:12',
-            'volume_24h' => 'decimal:8',
-            'price_change_24h_percent' => 'decimal:4',
-            'funding_rate' => 'decimal:6',
-            'open_interest' => 'decimal:8',
-            'raw_payload' => 'array',
-            'snapshot_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'price' => 'decimal:12',
+        'volume_24h' => 'decimal:8',
+        'price_change_24h_percent' => 'decimal:4',
+        'funding_rate' => 'decimal:6',
+        'open_interest' => 'decimal:8',
+        'raw_payload' => 'array',
+        'snapshot_at' => 'datetime',
+    ];
 
     public function tradeSignal(): BelongsTo
     {

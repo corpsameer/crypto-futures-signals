@@ -12,6 +12,22 @@ class TradeSignal extends Model
     /** @use HasFactory<\Database\Factories\TradeSignalFactory> */
     use HasFactory;
 
+    public const DIRECTION_LONG = 'LONG';
+    public const DIRECTION_SHORT = 'SHORT';
+
+    public const MARKET_TYPE_FUTURES = 'futures';
+
+    public const STATUS_PENDING_ENTRY = 'pending_entry';
+    public const STATUS_ENTRY_TRIGGERED = 'entry_triggered';
+    public const STATUS_ENTRY_MISSED = 'entry_missed';
+    public const STATUS_ACTIVE = 'active';
+    public const STATUS_CLOSED_SL = 'closed_sl';
+    public const STATUS_CLOSED_TP = 'closed_tp';
+    public const STATUS_TRACKING_AFTER_SL = 'tracking_after_sl';
+    public const STATUS_EXPIRED = 'expired';
+    public const STATUS_COMPLETED = 'completed';
+    public const STATUS_INVALID = 'invalid';
+
     /**
      * The attributes that are mass assignable.
      *
@@ -43,25 +59,22 @@ class TradeSignal extends Model
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'leverage' => 'decimal:2',
-            'entry_min' => 'decimal:12',
-            'entry_max' => 'decimal:12',
-            'stop_loss' => 'decimal:12',
-            'tp1' => 'decimal:12',
-            'tp2' => 'decimal:12',
-            'tp3' => 'decimal:12',
-            'tp4' => 'decimal:12',
-            'signal_time' => 'datetime',
-            'expires_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'leverage' => 'decimal:2',
+        'entry_min' => 'decimal:12',
+        'entry_max' => 'decimal:12',
+        'stop_loss' => 'decimal:12',
+        'tp1' => 'decimal:12',
+        'tp2' => 'decimal:12',
+        'tp3' => 'decimal:12',
+        'tp4' => 'decimal:12',
+        'signal_time' => 'datetime',
+        'expires_at' => 'datetime',
+    ];
 
     public function user(): BelongsTo
     {
@@ -78,7 +91,7 @@ class TradeSignal extends Model
         return $this->hasMany(SimulatedTrade::class);
     }
 
-    public function tradeTrackingEvents(): HasMany
+    public function trackingEvents(): HasMany
     {
         return $this->hasMany(TradeTrackingEvent::class);
     }
@@ -86,5 +99,67 @@ class TradeSignal extends Model
     public function marketSnapshots(): HasMany
     {
         return $this->hasMany(MarketSnapshot::class);
+    }
+
+    public function isLong(): bool
+    {
+        return $this->direction === self::DIRECTION_LONG;
+    }
+
+    public function isShort(): bool
+    {
+        return $this->direction === self::DIRECTION_SHORT;
+    }
+
+    public function isPendingEntry(): bool
+    {
+        return $this->status === self::STATUS_PENDING_ENTRY;
+    }
+
+    public function isActiveLike(): bool
+    {
+        return in_array($this->status, [
+            self::STATUS_PENDING_ENTRY,
+            self::STATUS_ENTRY_TRIGGERED,
+            self::STATUS_ACTIVE,
+            self::STATUS_TRACKING_AFTER_SL,
+        ], true);
+    }
+
+    public function hasEntryRange(): bool
+    {
+        return $this->entry_min !== null
+            && $this->entry_max !== null
+            && $this->entry_min != $this->entry_max;
+    }
+
+    public function getEntryDisplayAttribute(): string
+    {
+        if ($this->hasEntryRange()) {
+            return $this->entry_min.' - '.$this->entry_max;
+        }
+
+        if ($this->entry_min !== null) {
+            return (string) $this->entry_min;
+        }
+
+        if ($this->entry_max !== null) {
+            return (string) $this->entry_max;
+        }
+
+        return 'N/A';
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getTpLevelsAttribute(): array
+    {
+        return array_filter([
+            'tp1' => $this->tp1,
+            'tp2' => $this->tp2,
+            'tp3' => $this->tp3,
+            'tp4' => $this->tp4,
+        ], fn ($value): bool => $value !== null);
     }
 }

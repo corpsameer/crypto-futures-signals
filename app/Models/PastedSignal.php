@@ -12,6 +12,13 @@ class PastedSignal extends Model
     /** @use HasFactory<\Database\Factories\PastedSignalFactory> */
     use HasFactory;
 
+    public const PARSE_STATUS_PENDING = 'pending';
+    public const PARSE_STATUS_PARSED = 'parsed';
+    public const PARSE_STATUS_FAILED = 'failed';
+    public const PARSE_STATUS_MANUALLY_CORRECTED = 'manually_corrected';
+
+    public const SOURCE_MANUAL_PASTE = 'manual_paste';
+
     /**
      * The attributes that are mass assignable.
      *
@@ -29,17 +36,14 @@ class PastedSignal extends Model
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'parsed_payload' => 'array',
-            'pasted_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'parsed_payload' => 'array',
+        'pasted_at' => 'datetime',
+    ];
 
     public function user(): BelongsTo
     {
@@ -49,5 +53,15 @@ class PastedSignal extends Model
     public function tradeSignals(): HasMany
     {
         return $this->hasMany(TradeSignal::class);
+    }
+
+    public function isParsed(): bool
+    {
+        return $this->parse_status === self::PARSE_STATUS_PARSED;
+    }
+
+    public function isFailed(): bool
+    {
+        return $this->parse_status === self::PARSE_STATUS_FAILED;
     }
 }
