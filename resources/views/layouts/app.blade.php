@@ -15,15 +15,15 @@
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
-            <a class="navbar-brand" href="/cryptofuturesignals/dashboard">Crypto Futures Signal Analyzer</a>
+            <a class="navbar-brand" href="{{ route('cryptofuturesignals.dashboard') }}">Crypto Futures Signal Analyzer</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavigation" aria-controls="mainNavigation" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="mainNavigation">
                 <ul class="navbar-nav ms-auto mb-2 mb-lg-0 align-items-lg-center">
-                    <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/dashboard">Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/signals/create">Paste Signal</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/signals">Signals</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.dashboard') }}">Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.signals.create') }}">Paste Signal</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.signals.index') }}">Signals</a></li>
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/trades">Simulated Trades</a></li>
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/trader-performance">Trader Performance</a></li>
                     @auth
@@ -31,7 +31,7 @@
                             <span class="navbar-text text-light">{{ auth()->user()->name }}</span>
                         </li>
                         <li class="nav-item ms-lg-2">
-                            <form method="POST" action="/cryptofuturesignals/logout">
+                            <form method="POST" action="{{ route('cryptofuturesignals.logout') }}">
                                 @csrf
                                 <button type="submit" class="btn btn-outline-light btn-sm">Logout</button>
                             </form>
