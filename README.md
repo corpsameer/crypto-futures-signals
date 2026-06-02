@@ -187,6 +187,45 @@ DROP TABLE users;
 php artisan migrate
 ```
 
+
+## Python API Token
+
+Laravel API endpoints intended for future Python scripts are protected with a shared token header:
+
+```text
+X-PYTHON-API-TOKEN: value_from_env
+```
+
+The expected token value comes from `PYTHON_API_TOKEN` in `.env`. The example environment file includes:
+
+```dotenv
+PYTHON_API_TOKEN=change_me_secure_token
+```
+
+The current token-protected health endpoint is available at:
+
+```text
+/api/cryptofuturesignals/api/health
+```
+
+Without a token, the endpoint should return HTTP 401:
+
+```bash
+curl http://127.0.0.1:8000/api/cryptofuturesignals/api/health
+```
+
+With an invalid token, the endpoint should return HTTP 403:
+
+```bash
+curl -H "X-PYTHON-API-TOKEN: wrong" http://127.0.0.1:8000/api/cryptofuturesignals/api/health
+```
+
+With the valid example token, the endpoint should return HTTP 200 with `success: true`:
+
+```bash
+curl -H "X-PYTHON-API-TOKEN: change_me_secure_token" http://127.0.0.1:8000/api/cryptofuturesignals/api/health
+```
+
 ## Telegram and Trading Notes
 
 - There is no Telegram API integration in Phase 1. Signals will be manually pasted into a Laravel frontend form in a future phase.
