@@ -37,3 +37,14 @@ python python/price_monitor.py --once --skip-config-check
 - No Telegram API integration.
 - No WebSocket integration yet.
 - This is only Phase 1 monitoring/data collection setup.
+
+## Testing CoinDCX Price Client
+
+Use the safe local CLI checks to fetch public ticker prices without contacting Laravel:
+
+```bash
+python python/coindcx_client.py --test
+python python/coindcx_client.py --symbols ICPUSDT CHZ/USDT OPUSDT
+```
+
+The client uses the public CoinDCX REST ticker configured by `COINDCX_MARKET_URL`. Missing symbols are logged safely and reported as `found=False` with `price=None`. This test does not perform live trading and does not use authenticated CoinDCX APIs.
