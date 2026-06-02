@@ -226,6 +226,199 @@ With the valid example token, the endpoint should return HTTP 200 with `success:
 curl -H "X-PYTHON-API-TOKEN: change_me_secure_token" http://127.0.0.1:8000/api/cryptofuturesignals/api/health
 ```
 
+
+## Python Monitor API Endpoints
+
+All Python monitor routes live under Laravel's API prefix and the project prefix, so the local URLs use this structure:
+
+```text
+/api/cryptofuturesignals/api/...
+```
+
+Every request must include the shared token header:
+
+```text
+X-PYTHON-API-TOKEN: change_me_secure_token
+```
+
+### Pending trade signals
+
+Fetch structured signals waiting for an entry trigger:
+
+```bash
+curl -H "X-PYTHON-API-TOKEN: change_me_secure_token" \
+  "http://127.0.0.1:8000/api/cryptofuturesignals/api/trade-signals/pending?limit=100&symbol=BTCUSDT"
+```
+
+Endpoint:
+
+```text
+GET /api/cryptofuturesignals/api/trade-signals/pending
+```
+
+### Active simulated trades
+
+Fetch active simulated trades that need normal monitoring:
+
+```bash
+curl -H "X-PYTHON-API-TOKEN: change_me_secure_token" \
+  "http://127.0.0.1:8000/api/cryptofuturesignals/api/simulated-trades/active?limit=100&symbol=BTCUSDT"
+```
+
+Endpoint:
+
+```text
+GET /api/cryptofuturesignals/api/simulated-trades/active
+```
+
+### Post-SL tracking trades
+
+Fetch simulated trades that hit stop loss but are still being tracked for post-SL TP hits:
+
+```bash
+curl -H "X-PYTHON-API-TOKEN: change_me_secure_token" \
+  "http://127.0.0.1:8000/api/cryptofuturesignals/api/simulated-trades/post-sl-tracking?limit=100&symbol=BTCUSDT"
+```
+
+Endpoint:
+
+```text
+GET /api/cryptofuturesignals/api/simulated-trades/post-sl-tracking
+```
+
+### Entry triggered
+
+Record that a pending signal entry has triggered. Repeating the same `trade_signal_id` reuses the existing simulated trade and updates the existing `ENTRY_TRIGGERED` tracking event.
+
+```bash
+curl -X POST \
+  -H "X-PYTHON-API-TOKEN: change_me_secure_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trade_signal_id": 1,
+    "entry_price": 65050,
+    "current_price": 65050,
+    "event_timestamp": "2026-06-01 12:30:00",
+    "actual_price_move_percent": 0,
+    "leveraged_pnl_percent": 0
+  }' \
+  http://127.0.0.1:8000/api/cryptofuturesignals/api/simulated-trades/entry-triggered
+```
+
+Endpoint:
+
+```text
+POST /api/cryptofuturesignals/api/simulated-trades/entry-triggered
+```
+
+### Store trade event
+
+Store or update an idempotent trade tracking event. The same `simulated_trade_id` and `event_type` pair updates the existing event instead of creating a duplicate.
+
+```bash
+curl -X POST \
+  -H "X-PYTHON-API-TOKEN: change_me_secure_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "simulated_trade_id": 10,
+    "event_type": "TP1_HIT",
+    "event_price": 66000,
+    "actual_price_move_percent": 1.46,
+    "leveraged_pnl_percent": 7.30,
+    "event_timestamp": "2026-06-01 13:10:00",
+    "metadata": {},
+    "notes": "TP1 hit"
+  }' \
+  http://127.0.0.1:8000/api/cryptofuturesignals/api/trade-events/store
+```
+
+Endpoint:
+
+```text
+POST /api/cryptofuturesignals/api/trade-events/store
+```
+
+### Update simulated trade metrics
+
+Update current price and max/min movement metrics without creating a tracking event:
+
+```bash
+curl -X POST \
+  -H "X-PYTHON-API-TOKEN: change_me_secure_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "simulated_trade_id": 10,
+    "current_price": 65100,
+    "actual_price_move_percent": 0.08,
+    "leveraged_pnl_percent": 0.40,
+    "price_timestamp": "2026-06-01 12:35:00"
+  }' \
+  http://127.0.0.1:8000/api/cryptofuturesignals/api/simulated-trades/update-metrics
+```
+
+Endpoint:
+
+```text
+POST /api/cryptofuturesignals/api/simulated-trades/update-metrics
+```
+
+### Close simulated trade
+
+Close a simulated trade and upsert the `TRADE_CLOSED` tracking event:
+
+```bash
+curl -X POST \
+  -H "X-PYTHON-API-TOKEN: change_me_secure_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "simulated_trade_id": 10,
+    "exit_price": 66000,
+    "exit_reason": "TP_HIT",
+    "status": "closed_tp",
+    "actual_price_move_percent": 1.46,
+    "leveraged_pnl_percent": 7.30,
+    "closed_at": "2026-06-01 13:10:00",
+    "notes": "Closed at TP"
+  }' \
+  http://127.0.0.1:8000/api/cryptofuturesignals/api/simulated-trades/close
+```
+
+Endpoint:
+
+```text
+POST /api/cryptofuturesignals/api/simulated-trades/close
+```
+
+### Store market snapshot
+
+Store optional market context snapshots for a signal or simulated trade:
+
+```bash
+curl -X POST \
+  -H "X-PYTHON-API-TOKEN: change_me_secure_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trade_signal_id": 1,
+    "simulated_trade_id": 10,
+    "symbol": "BTCUSDT",
+    "snapshot_type": "periodic",
+    "price": 65100,
+    "volume_24h": 1234567.89,
+    "price_change_24h_percent": 2.5,
+    "funding_rate": 0.01,
+    "open_interest": 1000000,
+    "raw_payload": {},
+    "snapshot_at": "2026-06-01 12:35:00"
+  }' \
+  http://127.0.0.1:8000/api/cryptofuturesignals/api/market-snapshots/store
+```
+
+Endpoint:
+
+```text
+POST /api/cryptofuturesignals/api/market-snapshots/store
+```
+
 ## Telegram and Trading Notes
 
 - There is no Telegram API integration in Phase 1. Signals will be manually pasted into a Laravel frontend form in a future phase.

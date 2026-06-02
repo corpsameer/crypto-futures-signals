@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\MonitorApiController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('cryptofuturesignals/api')
@@ -13,4 +14,13 @@ Route::prefix('cryptofuturesignals/api')
                 'timestamp' => now()->toDateTimeString(),
             ]);
         })->name('health');
+
+        Route::get('/trade-signals/pending', [MonitorApiController::class, 'pendingSignals'])->name('trade-signals.pending');
+        Route::get('/simulated-trades/active', [MonitorApiController::class, 'activeTrades'])->name('simulated-trades.active');
+        Route::get('/simulated-trades/post-sl-tracking', [MonitorApiController::class, 'postSlTrackingTrades'])->name('simulated-trades.post-sl-tracking');
+        Route::post('/simulated-trades/entry-triggered', [MonitorApiController::class, 'entryTriggered'])->name('simulated-trades.entry-triggered');
+        Route::post('/trade-events/store', [MonitorApiController::class, 'storeTradeEvent'])->name('trade-events.store');
+        Route::post('/simulated-trades/update-metrics', [MonitorApiController::class, 'updateMetrics'])->name('simulated-trades.update-metrics');
+        Route::post('/simulated-trades/close', [MonitorApiController::class, 'closeTrade'])->name('simulated-trades.close');
+        Route::post('/market-snapshots/store', [MonitorApiController::class, 'storeMarketSnapshot'])->name('market-snapshots.store');
     });
