@@ -191,30 +191,26 @@ class MonitorApiController extends Controller
             $eventType = $validated['event_type'];
             $eventTimestamp = Carbon::parse($validated['event_timestamp']);
 
-            $event = TradeTrackingEvent::updateOrCreate(
-                [
-                    'simulated_trade_id' => $simulatedTrade->id,
-                    'event_type' => $eventType,
-                ],
-                [
-                    'trade_signal_id' => $simulatedTrade->trade_signal_id,
-                    'event_price' => $validated['event_price'],
-                    'actual_price_move_percent' => $validated['actual_price_move_percent'],
-                    'leveraged_pnl_percent' => $validated['leveraged_pnl_percent'],
-                    'event_timestamp' => $eventTimestamp,
-                    'metadata' => $validated['metadata'] ?? null,
-                    'notes' => $validated['notes'] ?? null,
-                ]
-            );
+            $eventPayload = [
+                'trade_signal_id' => $simulatedTrade->trade_signal_id,
+                'event_price' => $validated['event_price'],
+                'actual_price_move_percent' => $validated['actual_price_move_percent'],
+                'leveraged_pnl_percent' => $validated['leveraged_pnl_percent'],
+                'event_timestamp' => $eventTimestamp,
+                'metadata' => $validated['metadata'] ?? null,
+                'notes' => $validated['notes'] ?? null,
+            ];
+
+            [$event, $message] = $this->storeIdempotentTradeEvent($simulatedTrade, $eventType, $eventPayload);
 
             $this->applyEventStatus($simulatedTrade, $eventType, $validated['event_price'], $eventTimestamp);
 
-            return [$simulatedTrade->fresh('tradeSignal'), $event];
+            return [$simulatedTrade->fresh('tradeSignal'), $event, $message];
         });
 
         return response()->json([
             'success' => true,
-            'message' => 'Trade event stored successfully.',
+            'message' => $result[2],
             'data' => [
                 'simulated_trade' => $this->formatTrade($result[0]),
                 'event' => $result[1],
@@ -405,6 +401,45 @@ class MonitorApiController extends Controller
         ];
 
         return $data;
+    }
+
+
+    /**
+     * @param array<string, mixed> $eventPayload
+     * @return array{0: TradeTrackingEvent, 1: string}
+     */
+    private function storeIdempotentTradeEvent(SimulatedTrade $simulatedTrade, string $eventType, array $eventPayload): array
+    {
+        if ($eventType === TradeTrackingEvent::EVENT_POST_SL_MAX_GAIN) {
+            $existingEvent = TradeTrackingEvent::query()
+                ->where('simulated_trade_id', $simulatedTrade->id)
+                ->where('event_type', TradeTrackingEvent::EVENT_POST_SL_MAX_GAIN)
+                ->lockForUpdate()
+                ->first();
+
+            if ($existingEvent) {
+                $existingPnl = $existingEvent->leveraged_pnl_percent;
+                $incomingPnl = $eventPayload['leveraged_pnl_percent'];
+
+                if ($existingPnl !== null && (float) $incomingPnl <= (float) $existingPnl) {
+                    return [$existingEvent, 'Post-SL max gain unchanged.'];
+                }
+
+                $existingEvent->update($eventPayload);
+
+                return [$existingEvent->fresh(), 'Post-SL max gain updated successfully.'];
+            }
+        }
+
+        $event = TradeTrackingEvent::updateOrCreate(
+            [
+                'simulated_trade_id' => $simulatedTrade->id,
+                'event_type' => $eventType,
+            ],
+            $eventPayload
+        );
+
+        return [$event, 'Trade event stored successfully.'];
     }
 
     private function applyEventStatus(SimulatedTrade $simulatedTrade, string $eventType, mixed $eventPrice, Carbon $eventTimestamp): void

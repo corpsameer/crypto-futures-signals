@@ -313,6 +313,123 @@ def detect_tp_sl_events(trade: dict, current_price: float) -> list[dict]:
     return sl_events + tp_events
 
 
+
+def detect_post_sl_events(trade: dict, current_price: float) -> list[dict]:
+    """Detect original TP hits and max-gain updates during post-SL tracking."""
+    price = safe_float(current_price)
+    entry_price = get_trade_entry_price(trade)
+    leverage = get_trade_leverage(trade)
+    direction = get_trade_direction(trade)
+
+    if price is None or entry_price is None or entry_price == 0:
+        return []
+
+    if direction not in {"LONG", "SHORT"}:
+        return []
+
+    actual_move_percent = calculate_move_percent(direction, entry_price, price)
+    leveraged_pnl_percent = calculate_leveraged_pnl_percent(actual_move_percent, leverage)
+    event_timestamp = datetime.now(timezone.utc).isoformat()
+
+    events = []
+    for field_name, event_type, note in (
+        ("tp1", "POST_SL_TP1_HIT", "Post-SL TP1 hit"),
+        ("tp2", "POST_SL_TP2_HIT", "Post-SL TP2 hit"),
+        ("tp3", "POST_SL_TP3_HIT", "Post-SL TP3 hit"),
+        ("tp4", "POST_SL_TP4_HIT", "Post-SL TP4 hit"),
+    ):
+        target_price = safe_float(get_trade_signal_value(trade, field_name))
+        if target_price is not None and _target_hit(direction, price, target_price):
+            events.append(
+                {
+                    "event_type": event_type,
+                    "event_price": price,
+                    "actual_price_move_percent": actual_move_percent,
+                    "leveraged_pnl_percent": leveraged_pnl_percent,
+                    "event_timestamp": event_timestamp,
+                    "metadata": {
+                        "target_price": target_price,
+                        "current_price": price,
+                        "source": "python_monitor",
+                        "phase": "post_sl_tracking",
+                    },
+                    "notes": note,
+                }
+            )
+
+    events.append(
+        {
+            "event_type": "POST_SL_MAX_GAIN",
+            "event_price": price,
+            "actual_price_move_percent": actual_move_percent,
+            "leveraged_pnl_percent": leveraged_pnl_percent,
+            "event_timestamp": event_timestamp,
+            "metadata": {
+                "current_price": price,
+                "source": "python_monitor",
+                "phase": "post_sl_tracking",
+            },
+            "notes": "Best post-SL gain observed",
+        }
+    )
+
+    return events
+
+
+def is_post_sl_tracking_expired(trade: dict, now_dt=None) -> bool:
+    """Return whether a post-SL trade has passed its tracking_until timestamp."""
+    if not isinstance(trade, dict):
+        return False
+
+    tracking_until = trade.get("tracking_until")
+    if tracking_until in (None, ""):
+        return False
+
+    expires_at = _parse_tracking_datetime(tracking_until)
+    if expires_at is None:
+        return False
+
+    current = now_dt or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    return current >= expires_at
+
+
+def parse_post_sl_tracking_until(value) -> datetime | None:
+    """Parse Laravel tracking_until strings into datetime objects, or None if invalid."""
+    return _parse_tracking_datetime(value)
+
+
+def _parse_tracking_datetime(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    candidates = [text]
+    if text.endswith("Z"):
+        candidates.append(text[:-1] + "+00:00")
+
+    for candidate in candidates:
+        try:
+            return datetime.fromisoformat(candidate)
+        except ValueError:
+            pass
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            pass
+
+    return None
+
 def detect_events(trade: dict, current_price: float) -> list[dict]:
     """Backward-compatible event detector focused on TP/SL tracking."""
     return detect_tp_sl_events(trade, current_price)
@@ -489,12 +606,13 @@ def _run_entry_trigger_tests() -> int:
     failures.extend(_run_tp_sl_tests())
     failures.extend(_run_gain_milestone_tests())
     failures.extend(_run_trade_metrics_tests())
+    failures.extend(_run_post_sl_tests())
 
     if failures:
         print(f"Trade logic tests failed: {', '.join(failures)}")
         return 1
 
-    print("All entry trigger, TP/SL, gain milestone, and trade metrics test cases pass.")
+    print("All entry trigger, TP/SL, gain milestone, trade metrics, and post-SL test cases pass.")
     return 0
 
 
@@ -693,6 +811,87 @@ def _run_trade_metrics_tests() -> list[str]:
 
     return failures
 
+
+
+def _run_post_sl_tests() -> list[str]:
+    test_cases = [
+        (
+            "Post-SL A) LONG TP1",
+            {"status": "tracking_after_sl", "entry_price": 100, "direction": "LONG", "leverage": 5, "tp1": 105},
+            105,
+            ["POST_SL_TP1_HIT", "POST_SL_MAX_GAIN"],
+            5,
+            25,
+        ),
+        (
+            "Post-SL B) LONG TP1 and TP2",
+            {"entry_price": 100, "direction": "LONG", "leverage": 5, "tp1": 105, "tp2": 110},
+            111,
+            ["POST_SL_TP1_HIT", "POST_SL_TP2_HIT", "POST_SL_MAX_GAIN"],
+            11,
+            55,
+        ),
+        (
+            "Post-SL C) SHORT TP1",
+            {"entry_price": 100, "direction": "SHORT", "leverage": 5, "tp1": 95},
+            95,
+            ["POST_SL_TP1_HIT", "POST_SL_MAX_GAIN"],
+            5,
+            25,
+        ),
+        (
+            "Post-SL D) SHORT TP1 and TP2",
+            {"entry_price": 100, "direction": "SHORT", "leverage": 5, "tp1": 95, "tp2": 90},
+            89,
+            ["POST_SL_TP1_HIT", "POST_SL_TP2_HIT", "POST_SL_MAX_GAIN"],
+            11,
+            55,
+        ),
+        (
+            "Post-SL E) No TP hit",
+            {"entry_price": 100, "direction": "LONG", "leverage": 5, "tp1": 105},
+            102,
+            ["POST_SL_MAX_GAIN"],
+            2,
+            10,
+        ),
+    ]
+
+    failures = []
+    for name, trade, current_price, expected_types, expected_move, expected_pnl in test_cases:
+        events = detect_post_sl_events(trade, current_price)
+        actual_types = [event["event_type"] for event in events]
+        passed = actual_types == expected_types
+
+        if passed and events:
+            max_gain_event = events[-1]
+            passed = (
+                round(max_gain_event["actual_price_move_percent"], 8) == round(expected_move, 8)
+                and round(max_gain_event["leveraged_pnl_percent"], 8) == round(expected_pnl, 8)
+                and all(event["event_price"] == safe_float(current_price) for event in events)
+                and all(event.get("event_timestamp") for event in events)
+                and all(event.get("metadata", {}).get("phase") == "post_sl_tracking" for event in events)
+            )
+
+        status = "PASS" if passed else "FAIL"
+        print(f"{status}: {name} expected={expected_types} actual={actual_types}")
+        if not passed:
+            failures.append(name)
+
+    now = datetime(2026, 6, 2, 12, 0, 0, tzinfo=timezone.utc)
+    expiry_cases = [
+        ("Post-SL F) Expired past SQL timestamp", {"tracking_until": "2026-06-02 11:59:59"}, True),
+        ("Post-SL G) Future ISO timestamp", {"tracking_until": "2026-06-02T12:00:01+00:00"}, False),
+    ]
+    for name, trade, expected in expiry_cases:
+        actual = is_post_sl_tracking_expired(trade, now)
+        passed = actual is expected
+        status = "PASS" if passed else "FAIL"
+        print(f"{status}: {name} expected={expected} actual={actual}")
+        if not passed:
+            failures.append(name)
+
+    return failures
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run trade logic helper checks.")
