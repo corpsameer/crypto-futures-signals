@@ -61,7 +61,7 @@
                                         @endif
                                     </td>
                                     <td>
-                                        @if ($signal->tradeSignals->isNotEmpty())
+                                        @if ($signal->latestTradeSignal)
                                             <span class="badge text-bg-success">Saved</span>
                                         @else
                                             <span class="badge text-bg-secondary">Not Saved</span>
@@ -72,8 +72,8 @@
                                     <td>
                                         <div class="d-flex flex-column gap-2">
                                             <a href="{{ route('cryptofuturesignals.signals.preview', $signal) }}" class="btn btn-sm btn-outline-primary">Review/Edit</a>
-                                            @if ($signal->tradeSignals->isNotEmpty())
-                                                <a href="{{ route('cryptofuturesignals.trade-signals.show', $signal->tradeSignals->first()) }}" class="btn btn-sm btn-outline-success">View Structured Signal</a>
+                                            @if ($signal->latestTradeSignal)
+                                                <a href="{{ route('cryptofuturesignals.trade-signals.show', $signal->latestTradeSignal) }}" class="btn btn-sm btn-outline-success">View Detail</a>
                                             @endif
                                         </div>
                                     </td>

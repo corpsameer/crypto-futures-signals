@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class PastedSignal extends Model
 {
@@ -53,6 +54,11 @@ class PastedSignal extends Model
     public function tradeSignals(): HasMany
     {
         return $this->hasMany(TradeSignal::class);
+    }
+
+    public function latestTradeSignal(): HasOne
+    {
+        return $this->hasOne(TradeSignal::class)->latestOfMany();
     }
 
     public function isParsed(): bool

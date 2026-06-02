@@ -14,7 +14,7 @@ class PastedSignalController extends Controller
     public function index(): View
     {
         $signals = PastedSignal::query()
-            ->with('tradeSignals')
+            ->with('latestTradeSignal')
             ->where('user_id', auth()->id())
             ->orderByDesc('pasted_at')
             ->orderByDesc('id')
