@@ -426,4 +426,36 @@ POST /api/cryptofuturesignals/api/market-snapshots/store
 
 ## Python Monitor Folder
 
-`python_monitor/` is reserved for future CoinDCX price monitoring scripts that will call Laravel APIs. It currently contains only documentation and an `.env.example` file.
+`python_monitor/` is a legacy placeholder. The active Phase 1 Python monitor skeleton now lives in `python/`.
+
+## Python Monitor Setup
+
+The initial Phase 1 Python monitor skeleton lives in `python/`. It reads configuration from `python/.env` and uses the Laravel API token header `X-PYTHON-API-TOKEN`.
+
+Copy the Python environment example file:
+
+```bash
+cp python/.env.example python/.env
+```
+
+Edit `python/.env` and set `PYTHON_API_TOKEN` to match the Laravel `.env` token.
+
+Install Python dependencies manually:
+
+```bash
+pip install -r python/requirements.txt
+```
+
+Run a one-time monitor check:
+
+```bash
+python python/price_monitor.py --once
+```
+
+Run a one-time monitor check with temporary config validation bypass for local dry testing before setting a real token:
+
+```bash
+python python/price_monitor.py --once --skip-config-check
+```
+
+Phase 1 Python monitoring is data-collection setup only: no live trading, no authenticated CoinDCX API calls, and no Telegram API integration.
