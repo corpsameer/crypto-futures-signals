@@ -19,6 +19,7 @@ from laravel_api_client import LaravelApiClient
 from trade_logic import (
     calculate_leveraged_pnl_percent,
     calculate_move_percent,
+    detect_gain_milestone_events,
     detect_tp_sl_events,
     get_trade_direction,
     get_trade_entry_price,
@@ -202,34 +203,47 @@ def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiCl
         except Exception as exc:
             logger.error("Metrics update failed for trade %s: %s", trade_id, exc)
 
-        events = detect_tp_sl_events(trade, current_price)
-        for event in events:
-            event_type = event["event_type"]
-            logger.info("Detected event %s for trade %s at price %s", event_type, trade_id, event["event_price"])
+        tp_sl_events = detect_tp_sl_events(trade, current_price)
+        gain_milestone_events = detect_gain_milestone_events(trade, current_price)
 
-            event_payload = {
-                "simulated_trade_id": trade_id,
-                "event_type": event_type,
-                "event_price": event["event_price"],
-                "actual_price_move_percent": event["actual_price_move_percent"],
-                "leveraged_pnl_percent": event["leveraged_pnl_percent"],
-                "event_timestamp": event["event_timestamp"],
-                "metadata": event["metadata"],
-                "notes": event["notes"],
-            }
+        for event in gain_milestone_events:
+            logger.info(
+                "Detected event %s for trade %s at price %s, leveraged pnl %.2f%%",
+                event["event_type"],
+                trade_id,
+                event["event_price"],
+                event["leveraged_pnl_percent"],
+            )
 
-            try:
-                response = laravel_client.store_event(event_payload)
-                logger.info(
-                    "Laravel event store succeeded for trade %s %s: %s",
-                    trade_id,
-                    event_type,
-                    summarize_response(response),
-                )
-            except Exception as exc:
-                logger.error("Laravel event store failed for trade %s %s: %s", trade_id, event_type, exc)
+        for event in tp_sl_events + gain_milestone_events:
+            store_trade_event(laravel_client, trade_id, event)
     except Exception as exc:
         logger.exception("Failed to process active trade %s (%s): %s", trade_id, symbol or "unknown symbol", exc)
+
+
+def store_trade_event(laravel_client: LaravelApiClient, trade_id, event: dict) -> None:
+    event_type = event["event_type"]
+    event_payload = {
+        "simulated_trade_id": trade_id,
+        "event_type": event_type,
+        "event_price": event["event_price"],
+        "actual_price_move_percent": event["actual_price_move_percent"],
+        "leveraged_pnl_percent": event["leveraged_pnl_percent"],
+        "event_timestamp": event["event_timestamp"],
+        "metadata": event["metadata"],
+        "notes": event["notes"],
+    }
+
+    try:
+        response = laravel_client.store_event(event_payload)
+        logger.info(
+            "Laravel event store succeeded for trade %s %s: %s",
+            trade_id,
+            event_type,
+            summarize_response(response),
+        )
+    except Exception as exc:
+        logger.error("Laravel event store failed for trade %s %s: %s", trade_id, event_type, exc)
 
 
 def collect_symbols(signals: list[dict]) -> list[str]:
