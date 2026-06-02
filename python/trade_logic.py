@@ -153,57 +153,157 @@ def is_entry_triggered(signal: dict, current_price: float) -> bool:
 
 
 def calculate_move_percent(direction: str, entry_price: float, current_price: float) -> float:
-    if entry_price == 0:
+    entry = safe_float(entry_price)
+    price = safe_float(current_price)
+    normalized_direction = _normalize_direction(direction)
+
+    if entry is None or price is None:
+        return 0.0
+
+    if entry == 0:
         raise ValueError("entry_price must not be zero.")
 
-    normalized_direction = str(direction or "").upper()
-
     if normalized_direction == "SHORT":
-        return ((entry_price - current_price) / entry_price) * 100
+        return ((entry - price) / entry) * 100
 
-    return ((current_price - entry_price) / entry_price) * 100
+    return ((price - entry) / entry) * 100
 
 
 def calculate_leveraged_pnl_percent(actual_move_percent: float, leverage: float) -> float:
     return actual_move_percent * leverage
 
 
-def detect_events(trade: dict, current_price: float) -> list[dict]:
-    entry_price = _safe_float(trade.get("entry_price"))
-    leverage = _safe_float(trade.get("leverage")) or 1.0
-    direction = str(trade.get("direction") or "LONG").upper()
+def detect_tp_sl_events(trade: dict, current_price: float) -> list[dict]:
+    """Detect TP/SL events for an active simulated trade at the observed price."""
+    price = safe_float(current_price)
+    entry_price = get_trade_entry_price(trade)
+    leverage = get_trade_leverage(trade)
+    direction = get_trade_direction(trade)
 
-    if entry_price is None or entry_price == 0:
+    if price is None or entry_price is None or entry_price == 0:
         return []
 
-    actual_move_percent = calculate_move_percent(direction, entry_price, current_price)
+    if direction not in {"LONG", "SHORT"}:
+        return []
+
+    actual_move_percent = calculate_move_percent(direction, entry_price, price)
     leveraged_pnl_percent = calculate_leveraged_pnl_percent(actual_move_percent, leverage)
-    events = []
 
-    for threshold, event_type in (
-        (3, "GAIN_3_PERCENT"),
-        (3.5, "GAIN_3_5_PERCENT"),
-        (5, "GAIN_5_PERCENT"),
-        (7, "GAIN_7_PERCENT"),
+    tp_events = []
+    for field_name, event_type, note in (
+        ("tp1", "TP1_HIT", "TP1 hit"),
+        ("tp2", "TP2_HIT", "TP2 hit"),
+        ("tp3", "TP3_HIT", "TP3 hit"),
+        ("tp4", "TP4_HIT", "TP4 hit"),
     ):
-        if leveraged_pnl_percent >= threshold:
-            events.append(_event_payload(trade, event_type, current_price, actual_move_percent, leveraged_pnl_percent))
+        target_price = safe_float(get_trade_signal_value(trade, field_name))
+        if target_price is not None and _target_hit(direction, price, target_price):
+            tp_events.append(
+                _tp_sl_event_payload(
+                    event_type=event_type,
+                    current_price=price,
+                    actual_move_percent=actual_move_percent,
+                    leveraged_pnl_percent=leveraged_pnl_percent,
+                    metadata={
+                        "target_price": target_price,
+                        "current_price": price,
+                        "source": "python_monitor",
+                    },
+                    notes=note,
+                )
+            )
 
-    for field_name, event_type in (
-        ("tp1", "TP1_HIT"),
-        ("tp2", "TP2_HIT"),
-        ("tp3", "TP3_HIT"),
-        ("tp4", "TP4_HIT"),
-    ):
-        target_price = _safe_float(trade.get(field_name))
-        if target_price is not None and _target_hit(direction, current_price, target_price):
-            events.append(_event_payload(trade, event_type, current_price, actual_move_percent, leveraged_pnl_percent))
+    sl_events = []
+    stop_loss = safe_float(get_trade_signal_value(trade, "stop_loss"))
+    if stop_loss is not None and _stop_loss_hit(direction, price, stop_loss):
+        sl_events.append(
+            _tp_sl_event_payload(
+                event_type="SL_HIT",
+                current_price=price,
+                actual_move_percent=actual_move_percent,
+                leveraged_pnl_percent=leveraged_pnl_percent,
+                metadata={
+                    "stop_loss": stop_loss,
+                    "current_price": price,
+                    "source": "python_monitor",
+                },
+                notes="SL hit",
+            )
+        )
 
-    stop_loss = _safe_float(trade.get("stop_loss"))
-    if stop_loss is not None and _stop_loss_hit(direction, current_price, stop_loss):
-        events.append(_event_payload(trade, "SL_HIT", current_price, actual_move_percent, leveraged_pnl_percent))
+    return sl_events + tp_events
 
-    return events
+
+def detect_events(trade: dict, current_price: float) -> list[dict]:
+    """Backward-compatible event detector focused on TP/SL tracking."""
+    return detect_tp_sl_events(trade, current_price)
+
+
+def _tp_sl_event_payload(
+    event_type: str,
+    current_price: float,
+    actual_move_percent: float,
+    leveraged_pnl_percent: float,
+    metadata: dict,
+    notes: str,
+) -> dict:
+    return {
+        "event_type": event_type,
+        "event_price": current_price,
+        "actual_price_move_percent": actual_move_percent,
+        "leveraged_pnl_percent": leveraged_pnl_percent,
+        "event_timestamp": datetime.now(timezone.utc).isoformat(),
+        "metadata": metadata,
+        "notes": notes,
+    }
+
+
+def get_trade_signal_value(trade: dict, key: str):
+    if not isinstance(trade, dict):
+        return None
+
+    value = trade.get(key)
+    if value not in (None, ""):
+        return value
+
+    trade_signal = trade.get("trade_signal")
+    if isinstance(trade_signal, dict):
+        return trade_signal.get(key)
+
+    return None
+
+
+def get_trade_symbol(trade: dict) -> str:
+    if not isinstance(trade, dict):
+        return ""
+
+    return normalize_symbol(
+        get_trade_signal_value(trade, "symbol")
+        or get_trade_signal_value(trade, "pair")
+        or trade.get("market")
+    )
+
+
+def get_trade_direction(trade: dict) -> str:
+    return _normalize_direction(get_trade_signal_value(trade, "direction"))
+
+
+def get_trade_leverage(trade: dict) -> float:
+    return safe_float(get_trade_signal_value(trade, "leverage"), 1.0)
+
+
+def get_trade_entry_price(trade: dict) -> float | None:
+    return safe_float(get_trade_signal_value(trade, "entry_price"))
+
+
+def safe_float(value, default=None):
+    if value is None or value == "":
+        return default
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _event_payload(
@@ -248,13 +348,7 @@ def _normalize_direction(direction) -> str:
 
 
 def _safe_float(value):
-    if value is None or value == "":
-        return None
-
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    return safe_float(value)
 
 
 def _run_entry_trigger_tests() -> int:
@@ -306,13 +400,94 @@ def _run_entry_trigger_tests() -> int:
         if actual is not expected:
             failures.append(name)
 
+    failures.extend(_run_tp_sl_tests())
+
     if failures:
-        print(f"Entry trigger tests failed: {', '.join(failures)}")
+        print(f"Trade logic tests failed: {', '.join(failures)}")
         return 1
 
-    print("All entry trigger test cases pass.")
+    print("All entry trigger and TP/SL test cases pass.")
     return 0
 
+
+def _run_tp_sl_tests() -> list[str]:
+    test_cases = [
+        (
+            "TP/SL A) LONG TP1 hit",
+            {"direction": "LONG", "entry_price": 100, "leverage": 5, "tp1": 105},
+            105,
+            ["TP1_HIT"],
+            5,
+            25,
+        ),
+        (
+            "TP/SL B) LONG SL hit",
+            {"direction": "LONG", "entry_price": 100, "leverage": 5, "stop_loss": 95},
+            95,
+            ["SL_HIT"],
+            -5,
+            -25,
+        ),
+        (
+            "TP/SL C) SHORT TP1 hit",
+            {"direction": "SHORT", "entry_price": 100, "leverage": 5, "tp1": 95},
+            95,
+            ["TP1_HIT"],
+            5,
+            25,
+        ),
+        (
+            "TP/SL D) SHORT SL hit",
+            {"direction": "SHORT", "entry_price": 100, "leverage": 5, "stop_loss": 105},
+            105,
+            ["SL_HIT"],
+            -5,
+            -25,
+        ),
+        (
+            "TP/SL E) LONG multiple TPs hit",
+            {"direction": "LONG", "entry_price": 100, "leverage": 5, "tp1": 102, "tp2": 104, "tp3": 106},
+            105,
+            ["TP1_HIT", "TP2_HIT"],
+            5,
+            25,
+        ),
+        (
+            "TP/SL F) Missing TP values",
+            {"direction": "LONG", "entry_price": "100", "leverage": "5", "tp1": None, "tp2": "", "trade_signal": {}},
+            101,
+            [],
+            None,
+            None,
+        ),
+        (
+            "TP/SL G) Nested trade_signal TP value",
+            {"entry_price": "100", "trade_signal": {"direction": "LONG", "leverage": "5", "tp1": "105"}},
+            105,
+            ["TP1_HIT"],
+            5,
+            25,
+        ),
+    ]
+
+    failures = []
+    for name, trade, current_price, expected_types, expected_move, expected_pnl in test_cases:
+        events = detect_tp_sl_events(trade, current_price)
+        actual_types = [event["event_type"] for event in events]
+        passed = actual_types == expected_types
+
+        if passed and events and expected_move is not None and expected_pnl is not None:
+            passed = (
+                round(events[0]["actual_price_move_percent"], 8) == round(expected_move, 8)
+                and round(events[0]["leveraged_pnl_percent"], 8) == round(expected_pnl, 8)
+            )
+
+        status = "PASS" if passed else "FAIL"
+        print(f"{status}: {name} expected={expected_types} actual={actual_types}")
+        if not passed:
+            failures.append(name)
+
+    return failures
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run trade logic helper checks.")

@@ -16,7 +16,18 @@ from constants import (
     require_config,
 )
 from laravel_api_client import LaravelApiClient
-from trade_logic import normalize_symbol, should_trigger_entry
+from trade_logic import (
+    calculate_leveraged_pnl_percent,
+    calculate_move_percent,
+    detect_tp_sl_events,
+    get_trade_direction,
+    get_trade_entry_price,
+    get_trade_leverage,
+    get_trade_symbol,
+    normalize_symbol,
+    safe_float,
+    should_trigger_entry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,18 +74,25 @@ def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -
     pending_signals = extract_items(fetch_with_error("pending signals", laravel_client.get_pending_signals))
     logger.info("Pending signals count: %d", len(pending_signals))
 
-    symbols = collect_symbols(pending_signals)
-    if not symbols:
+    pending_symbols = collect_symbols(pending_signals)
+    if pending_symbols:
+        pending_prices = fetch_prices(coindcx_client, pending_symbols, "entry trigger checks")
+        for signal in pending_signals:
+            process_pending_signal(signal, pending_prices, laravel_client)
+    else:
         logger.info("No pending signal symbols to price-check.")
+
+    active_trades = extract_items(fetch_with_error("active simulated trades", laravel_client.get_active_trades))
+    logger.info("Active trades count: %d", len(active_trades))
+
+    active_symbols = collect_trade_symbols(active_trades)
+    if not active_symbols:
+        logger.info("No active trade symbols to price-check.")
         return
 
-    prices = fetch_with_error("CoinDCX prices", lambda: coindcx_client.get_prices_for_symbols(symbols))
-    if not isinstance(prices, dict):
-        logger.warning("CoinDCX prices response was not a dictionary; skipping entry trigger checks.")
-        return
-
-    for signal in pending_signals:
-        process_pending_signal(signal, prices, laravel_client)
+    active_prices = fetch_prices(coindcx_client, active_symbols, "active trade TP/SL tracking")
+    for trade in active_trades:
+        process_active_trade(trade, active_prices, laravel_client)
 
 
 def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient) -> None:
@@ -130,6 +148,90 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
         logger.exception("Failed to process pending signal %s (%s): %s", signal_id, symbol or "unknown symbol", exc)
 
 
+
+def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient) -> None:
+    trade_id = (trade.get("id") or trade.get("simulated_trade_id")) if isinstance(trade, dict) else None
+    symbol = get_trade_symbol(trade)
+
+    try:
+        if not trade_id:
+            logger.warning("Skipping active trade without id: %s", trade)
+            return
+
+        if not symbol:
+            logger.warning("Skipping active trade %s without symbol.", trade_id)
+            return
+
+        price_data = prices.get(symbol) if isinstance(prices, dict) else None
+        if not price_data or not price_data.get("found"):
+            logger.warning("Price missing for active trade %s %s.", trade_id, symbol)
+            return
+
+        current_price = safe_float(price_data.get("price"))
+        if current_price is None:
+            logger.warning("Price invalid for active trade %s %s: %s", trade_id, symbol, price_data.get("price"))
+            return
+
+        logger.info("Price found for active trade %s %s: %s", trade_id, symbol, current_price)
+
+        direction = get_trade_direction(trade)
+        if direction not in {"LONG", "SHORT"}:
+            logger.warning("Skipping active trade %s %s with missing/invalid direction: %s", trade_id, symbol, direction)
+            return
+
+        entry_price = get_trade_entry_price(trade)
+        if entry_price is None or entry_price == 0:
+            logger.warning("Skipping active trade %s %s metrics/events: missing or invalid entry_price.", trade_id, symbol)
+            return
+
+        leverage = get_trade_leverage(trade)
+        actual_move = calculate_move_percent(direction, entry_price, current_price)
+        leveraged_pnl = calculate_leveraged_pnl_percent(actual_move, leverage)
+
+        metrics_payload = {
+            "simulated_trade_id": trade_id,
+            "current_price": current_price,
+            "actual_price_move_percent": actual_move,
+            "leveraged_pnl_percent": leveraged_pnl,
+            "price_timestamp": timestamp(),
+        }
+
+        try:
+            response = laravel_client.update_metrics(metrics_payload)
+            logger.info("Metrics updated for trade %s: %s", trade_id, summarize_response(response))
+        except Exception as exc:
+            logger.error("Metrics update failed for trade %s: %s", trade_id, exc)
+
+        events = detect_tp_sl_events(trade, current_price)
+        for event in events:
+            event_type = event["event_type"]
+            logger.info("Detected event %s for trade %s at price %s", event_type, trade_id, event["event_price"])
+
+            event_payload = {
+                "simulated_trade_id": trade_id,
+                "event_type": event_type,
+                "event_price": event["event_price"],
+                "actual_price_move_percent": event["actual_price_move_percent"],
+                "leveraged_pnl_percent": event["leveraged_pnl_percent"],
+                "event_timestamp": event["event_timestamp"],
+                "metadata": event["metadata"],
+                "notes": event["notes"],
+            }
+
+            try:
+                response = laravel_client.store_event(event_payload)
+                logger.info(
+                    "Laravel event store succeeded for trade %s %s: %s",
+                    trade_id,
+                    event_type,
+                    summarize_response(response),
+                )
+            except Exception as exc:
+                logger.error("Laravel event store failed for trade %s %s: %s", trade_id, event_type, exc)
+    except Exception as exc:
+        logger.exception("Failed to process active trade %s (%s): %s", trade_id, symbol or "unknown symbol", exc)
+
+
 def collect_symbols(signals: list[dict]) -> list[str]:
     symbols = []
     seen = set()
@@ -146,6 +248,30 @@ def collect_symbols(signals: list[dict]) -> list[str]:
         seen.add(symbol)
 
     return symbols
+
+
+def collect_trade_symbols(trades: list[dict]) -> list[str]:
+    symbols = []
+    seen = set()
+
+    for trade in trades:
+        symbol = get_trade_symbol(trade)
+        if not symbol or symbol in seen:
+            continue
+
+        symbols.append(symbol)
+        seen.add(symbol)
+
+    return symbols
+
+
+def fetch_prices(coindcx_client: CoinDCXClient, symbols: list[str], purpose: str) -> dict:
+    prices = fetch_with_error("CoinDCX prices", lambda: coindcx_client.get_prices_for_symbols(symbols))
+    if not isinstance(prices, dict):
+        logger.warning("CoinDCX prices response was not a dictionary; skipping %s.", purpose)
+        return {}
+
+    return prices
 
 
 def extract_items(value) -> list:
