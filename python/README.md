@@ -95,3 +95,15 @@ Active simulated trades are also checked for custom leveraged gain milestones on
   - `event_timestamp`
 - Laravel handles event idempotency, so repeated monitor runs can safely update the same `simulated_trade_id` + `event_type` instead of duplicating rows.
 - No live orders are placed, no authenticated CoinDCX APIs are used, and no Telegram integration is performed.
+
+## Max Gain / Loss Tracking
+
+Every active simulated trade updates its current price and max/min movement metrics through Laravel's `simulated-trades/update-metrics` API on each monitor run.
+
+- Laravel owns the historical max/min updates so database state stays consistent across repeated monitor runs.
+- `max_price_after_entry` stores the highest observed public price after entry.
+- `min_price_after_entry` stores the lowest observed public price after entry.
+- `max_gain_percent` stores the best leveraged P&L percentage reached after entry.
+- `max_loss_percent` stores the worst leveraged P&L percentage reached after entry.
+- `max_actual_gain_percent` and `max_actual_loss_percent` store the matching unleveraged price-move percentages for Phase 2 strategy analysis.
+- No live trading is performed, no authenticated CoinDCX APIs are used, and no Telegram integration is performed.

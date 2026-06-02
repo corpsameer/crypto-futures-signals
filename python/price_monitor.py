@@ -17,13 +17,11 @@ from constants import (
 )
 from laravel_api_client import LaravelApiClient
 from trade_logic import (
-    calculate_leveraged_pnl_percent,
-    calculate_move_percent,
+    calculate_trade_metrics,
     detect_gain_milestone_events,
     detect_tp_sl_events,
     get_trade_direction,
     get_trade_entry_price,
-    get_trade_leverage,
     get_trade_symbol,
     normalize_symbol,
     safe_float,
@@ -185,15 +183,12 @@ def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiCl
             logger.warning("Skipping active trade %s %s metrics/events: missing or invalid entry_price.", trade_id, symbol)
             return
 
-        leverage = get_trade_leverage(trade)
-        actual_move = calculate_move_percent(direction, entry_price, current_price)
-        leveraged_pnl = calculate_leveraged_pnl_percent(actual_move, leverage)
-
+        trade_metrics = calculate_trade_metrics(trade, current_price)
         metrics_payload = {
             "simulated_trade_id": trade_id,
-            "current_price": current_price,
-            "actual_price_move_percent": actual_move,
-            "leveraged_pnl_percent": leveraged_pnl,
+            "current_price": trade_metrics["current_price"],
+            "actual_price_move_percent": trade_metrics["actual_price_move_percent"],
+            "leveraged_pnl_percent": trade_metrics["leveraged_pnl_percent"],
             "price_timestamp": timestamp(),
         }
 
