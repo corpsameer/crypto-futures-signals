@@ -34,6 +34,9 @@ class LaravelApiClient:
     def entry_triggered(self, payload: dict):
         return self._post("/simulated-trades/entry-triggered", payload)
 
+    def mark_entry_missed(self, payload: dict):
+        return self._post("/trade-signals/mark-entry-missed", payload)
+
     def store_event(self, payload: dict):
         return self._post("/trade-events/store", payload)
 

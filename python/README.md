@@ -65,6 +65,21 @@ Run the local entry trigger test cases with:
 python python/trade_logic.py --test
 ```
 
+
+## Entry Missed / Expiry Logic
+
+Pending signals expire when entry is not triggered within `ENTRY_VALID_HOURS` (default `24`). The Python monitor checks expiry before normal entry-trigger logic so an old pending signal cannot trigger after its allowed entry window.
+
+Expiry age uses this priority:
+
+1. `trade_signals.expires_at` when present.
+2. `trade_signals.signal_time + ENTRY_VALID_HOURS`.
+3. `trade_signals.created_at + ENTRY_VALID_HOURS`.
+
+When a pending signal expires, Python calls Laravel's `trade-signals/mark-entry-missed` API and Laravel marks the structured trade signal as `entry_missed`. No simulated trade is created for missed entries. A `TRADE_EXPIRED` tracking event is only created when a simulated trade already exists for that signal, using idempotency on the existing simulated trade and event type.
+
+This remains Phase 1 tracking only: no live orders are placed, no authenticated CoinDCX APIs are used, no WebSocket is added, and no Telegram integration is performed. The entry-missed status helps measure entry trigger rate, missed opportunity rate, and overall signal usefulness.
+
 ## TP/SL Tracking
 
 The monitor also tracks active simulated trades created by Laravel. On each monitor run:

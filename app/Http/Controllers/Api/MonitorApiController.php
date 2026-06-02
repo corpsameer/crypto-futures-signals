@@ -40,6 +40,7 @@ class MonitorApiController extends Controller
                 'trader_name',
                 'signal_time',
                 'expires_at',
+                'created_at',
             ])
             ->where('status', TradeSignal::STATUS_PENDING_ENTRY)
             ->when(! empty($validated['symbol']), fn ($query) => $query->where('symbol', $validated['symbol']))
@@ -50,6 +51,94 @@ class MonitorApiController extends Controller
         return response()->json([
             'success' => true,
             'data' => $signals,
+        ]);
+    }
+
+    public function markEntryMissed(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'trade_signal_id' => ['required', 'integer', 'exists:trade_signals,id'],
+            'missed_at' => ['nullable', 'date'],
+            'reason' => ['nullable', 'string', 'max:255'],
+            'current_price' => ['nullable', 'numeric'],
+        ]);
+
+        $result = DB::transaction(function () use ($validated): array {
+            $tradeSignal = TradeSignal::query()->lockForUpdate()->findOrFail($validated['trade_signal_id']);
+            $missedAt = $this->dateOrNow($validated['missed_at'] ?? null);
+            $reason = $validated['reason'] ?? 'Entry not triggered within configured validity window';
+            $currentPrice = $validated['current_price'] ?? null;
+
+            if ($tradeSignal->status !== TradeSignal::STATUS_PENDING_ENTRY) {
+                return [
+                    'message' => 'Signal is not pending; no change made.',
+                    'trade_signal' => $tradeSignal->fresh(),
+                    'simulated_trade' => null,
+                    'event' => null,
+                ];
+            }
+
+            $expiryNote = sprintf('[%s] Entry missed: %s', $missedAt->toDateTimeString(), $reason);
+            $notes = trim((string) $tradeSignal->notes);
+
+            $tradeSignal->fill([
+                'status' => TradeSignal::STATUS_ENTRY_MISSED,
+                'expires_at' => $tradeSignal->expires_at ?? $missedAt,
+                'notes' => $notes === '' ? $expiryNote : $notes.PHP_EOL.$expiryNote,
+            ])->save();
+
+            $simulatedTrade = SimulatedTrade::query()
+                ->where('trade_signal_id', $tradeSignal->id)
+                ->lockForUpdate()
+                ->latest('id')
+                ->first();
+
+            $event = null;
+            if ($simulatedTrade) {
+                $simulatedTrade->update([
+                    'status' => SimulatedTrade::STATUS_EXPIRED,
+                    'closed_at' => $missedAt,
+                    'exit_reason' => TradeTrackingEvent::EVENT_TRADE_EXPIRED,
+                    'exit_price' => $currentPrice,
+                ]);
+
+                $event = TradeTrackingEvent::updateOrCreate(
+                    [
+                        'simulated_trade_id' => $simulatedTrade->id,
+                        'event_type' => TradeTrackingEvent::EVENT_TRADE_EXPIRED,
+                    ],
+                    [
+                        'trade_signal_id' => $tradeSignal->id,
+                        'event_price' => $currentPrice ?? 0,
+                        'actual_price_move_percent' => 0,
+                        'leveraged_pnl_percent' => 0,
+                        'event_timestamp' => $missedAt,
+                        'metadata' => [
+                            'source' => 'python_monitor',
+                            'reason' => $reason,
+                            'phase' => 'entry_expiry',
+                        ],
+                        'notes' => $expiryNote,
+                    ]
+                );
+            }
+
+            return [
+                'message' => 'Signal marked entry_missed successfully.',
+                'trade_signal' => $tradeSignal->fresh(),
+                'simulated_trade' => $simulatedTrade?->fresh('tradeSignal'),
+                'event' => $event,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => $result['message'],
+            'data' => [
+                'trade_signal' => $result['trade_signal'],
+                'simulated_trade' => $result['simulated_trade'] ? $this->formatTrade($result['simulated_trade']) : null,
+                'event' => $result['event'],
+            ],
         ]);
     }
 

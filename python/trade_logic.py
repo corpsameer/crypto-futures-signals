@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 ENTRY_TOLERANCE_PERCENT = 0.05
@@ -157,6 +157,44 @@ def calculate_entry_slippage_percent(direction: str, planned_entry_price: float,
 
 def is_entry_triggered(signal: dict, current_price: float) -> bool:
     return bool(should_trigger_entry(signal, current_price).get("triggered"))
+
+
+def is_entry_expired(signal: dict, entry_valid_hours: int, now_dt=None) -> tuple[bool, str]:
+    """Return whether a pending signal entry window has expired and why."""
+    if not isinstance(signal, dict):
+        return False, "Invalid signal payload for expiry check"
+
+    current = now_dt or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    expires_at = signal.get("expires_at")
+    if expires_at not in (None, ""):
+        parsed_expires_at = parse_laravel_datetime(expires_at)
+        if parsed_expires_at is None:
+            return False, f"Could not parse expires_at for expiry check: {expires_at}"
+
+        return current >= _ensure_aware_utc(parsed_expires_at), "Signal expires_at reached"
+
+    signal_time = signal.get("signal_time")
+    if signal_time not in (None, ""):
+        parsed_signal_time = parse_laravel_datetime(signal_time)
+        if parsed_signal_time is None:
+            return False, f"Could not parse signal_time for expiry check: {signal_time}"
+
+        expires_from_signal_time = _ensure_aware_utc(parsed_signal_time) + timedelta(hours=entry_valid_hours)
+        return current >= expires_from_signal_time, "Signal entry validity window expired from signal_time"
+
+    created_at = signal.get("created_at")
+    if created_at not in (None, ""):
+        parsed_created_at = parse_laravel_datetime(created_at)
+        if parsed_created_at is None:
+            return False, f"Could not parse created_at for expiry check: {created_at}"
+
+        expires_from_created_at = _ensure_aware_utc(parsed_created_at) + timedelta(hours=entry_valid_hours)
+        return current >= expires_from_created_at, "Signal entry validity window expired from created_at"
+
+    return False, "No timestamp available for expiry check"
 
 
 def calculate_move_percent(direction: str, entry_price: float, current_price: float) -> float:
@@ -404,7 +442,8 @@ def parse_post_sl_tracking_until(value) -> datetime | None:
     return _parse_tracking_datetime(value)
 
 
-def _parse_tracking_datetime(value) -> datetime | None:
+def parse_laravel_datetime(value) -> datetime | None:
+    """Parse common Laravel SQL/ISO datetime values into datetime objects."""
     if isinstance(value, datetime):
         return value
 
@@ -429,6 +468,18 @@ def _parse_tracking_datetime(value) -> datetime | None:
             pass
 
     return None
+
+
+def _ensure_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(timezone.utc)
+
+
+def _parse_tracking_datetime(value) -> datetime | None:
+    return parse_laravel_datetime(value)
+
 
 def detect_events(trade: dict, current_price: float) -> list[dict]:
     """Backward-compatible event detector focused on TP/SL tracking."""
@@ -607,12 +658,13 @@ def _run_entry_trigger_tests() -> int:
     failures.extend(_run_gain_milestone_tests())
     failures.extend(_run_trade_metrics_tests())
     failures.extend(_run_post_sl_tests())
+    failures.extend(_run_entry_expiry_tests())
 
     if failures:
         print(f"Trade logic tests failed: {', '.join(failures)}")
         return 1
 
-    print("All entry trigger, TP/SL, gain milestone, trade metrics, and post-SL test cases pass.")
+    print("All entry trigger, TP/SL, gain milestone, trade metrics, post-SL, and entry expiry test cases pass.")
     return 0
 
 
@@ -892,6 +944,63 @@ def _run_post_sl_tests() -> list[str]:
             failures.append(name)
 
     return failures
+
+
+def _run_entry_expiry_tests() -> list[str]:
+    now = datetime(2026, 6, 2, 12, 0, 0, tzinfo=timezone.utc)
+    test_cases = [
+        (
+            "Expiry A) expires_at in past",
+            {"expires_at": "2026-06-02 11:59:59", "signal_time": "2026-06-02 12:00:00"},
+            True,
+            "Signal expires_at reached",
+        ),
+        (
+            "Expiry B) expires_at in future",
+            {"expires_at": "2026-06-02T12:00:01.000000Z", "signal_time": "2026-05-31 12:00:00"},
+            False,
+            "Signal expires_at reached",
+        ),
+        (
+            "Expiry C) signal_time older than 24h",
+            {"signal_time": "2026-06-01 11:59:59"},
+            True,
+            "Signal entry validity window expired from signal_time",
+        ),
+        (
+            "Expiry D) signal_time newer than 24h",
+            {"signal_time": "2026-06-01T12:00:01+00:00"},
+            False,
+            "Signal entry validity window expired from signal_time",
+        ),
+        (
+            "Expiry E) created_at older than 24h",
+            {"created_at": "2026-06-01 11:59:59"},
+            True,
+            "Signal entry validity window expired from created_at",
+        ),
+        (
+            "Expiry F) missing timestamps",
+            {},
+            False,
+            "No timestamp available for expiry check",
+        ),
+    ]
+
+    failures = []
+    for name, signal, expected_expired, expected_reason in test_cases:
+        actual_expired, actual_reason = is_entry_expired(signal, 24, now)
+        passed = actual_expired is expected_expired and actual_reason == expected_reason
+        status = "PASS" if passed else "FAIL"
+        print(
+            f"{status}: {name} expected=({expected_expired}, {expected_reason}) "
+            f"actual=({actual_expired}, {actual_reason})"
+        )
+        if not passed:
+            failures.append(name)
+
+    return failures
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run trade logic helper checks.")

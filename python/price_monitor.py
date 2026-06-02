@@ -24,6 +24,7 @@ from trade_logic import (
     get_trade_direction,
     get_trade_entry_price,
     get_trade_symbol,
+    is_entry_expired,
     is_post_sl_tracking_expired,
     normalize_symbol,
     parse_post_sl_tracking_until,
@@ -116,16 +117,38 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
             logger.warning("Skipping pending signal without id: %s", signal)
             return
 
+        price_data = prices.get(symbol) if symbol and isinstance(prices, dict) else None
+        current_price = safe_float(price_data.get("price")) if price_data and price_data.get("found") else None
+
+        expired, expiry_reason = is_entry_expired(signal, ENTRY_VALID_HOURS, datetime.now(timezone.utc))
+        if expired:
+            payload = {
+                "trade_signal_id": signal_id,
+                "missed_at": timestamp(),
+                "reason": expiry_reason,
+                "current_price": current_price,
+            }
+            response = laravel_client.mark_entry_missed(payload)
+            logger.info(
+                "Signal %s marked entry_missed: %s (%s)",
+                signal_id,
+                expiry_reason,
+                summarize_response(response),
+            )
+            return
+
         if not symbol:
             logger.warning("Skipping pending signal %s without symbol.", signal_id)
             return
 
-        price_data = prices.get(symbol)
         if not price_data or not price_data.get("found"):
             logger.warning("Price missing for pending signal %s symbol %s.", signal_id, symbol)
             return
 
-        current_price = price_data.get("price")
+        if current_price is None:
+            logger.warning("Price invalid for pending signal %s symbol %s: %s", signal_id, symbol, price_data.get("price"))
+            return
+
         logger.info("Price found for pending signal %s symbol %s: %s", signal_id, symbol, current_price)
 
         trigger_result = should_trigger_entry(signal, current_price)
