@@ -107,3 +107,28 @@ Every active simulated trade updates its current price and max/min movement metr
 - `max_loss_percent` stores the worst leveraged P&L percentage reached after entry.
 - `max_actual_gain_percent` and `max_actual_loss_percent` store the matching unleveraged price-move percentages for Phase 2 strategy analysis.
 - No live trading is performed, no authenticated CoinDCX APIs are used, and no Telegram integration is performed.
+
+## Post-SL Tracking
+
+When an `SL_HIT` event is recorded, Laravel keeps the simulation open for post-stop-loss analysis by setting the simulated trade and linked trade signal status to `tracking_after_sl`. If `tracking_until` is empty, Laravel sets it using `SIGNAL_TRACKING_DAYS` (default 7 days).
+
+On each monitor run, Python fetches post-SL trades from Laravel's `simulated-trades/post-sl-tracking` API and continues checking public CoinDCX REST prices until `tracking_until` expires.
+
+Post-SL tracking records whether the original TP levels are reached after SL:
+
+- `POST_SL_TP1_HIT`
+- `POST_SL_TP2_HIT`
+- `POST_SL_TP3_HIT`
+- `POST_SL_TP4_HIT`
+- `POST_SL_MAX_GAIN`
+
+`POST_SL_MAX_GAIN` is sent on every post-SL monitor run with the latest recovery metrics. Laravel keeps only the best post-SL leveraged P&L for that event type and does not overwrite it with a worse value.
+
+Every post-SL event stores:
+
+- `event_price`
+- `actual_price_move_percent`
+- `leveraged_pnl_percent`
+- `event_timestamp`
+
+After the configured tracking window expires, Python closes the trade through Laravel's `simulated-trades/close` API with `status=completed` and `exit_reason=POST_SL_TRACKING_COMPLETED`. This remains simulation/tracking only: no live orders are placed, no authenticated CoinDCX APIs are used, no WebSocket is added, and no Telegram integration is performed.

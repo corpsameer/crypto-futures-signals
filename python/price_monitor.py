@@ -19,11 +19,14 @@ from laravel_api_client import LaravelApiClient
 from trade_logic import (
     calculate_trade_metrics,
     detect_gain_milestone_events,
+    detect_post_sl_events,
     detect_tp_sl_events,
     get_trade_direction,
     get_trade_entry_price,
     get_trade_symbol,
+    is_post_sl_tracking_expired,
     normalize_symbol,
+    parse_post_sl_tracking_until,
     safe_float,
     should_trigger_entry,
 )
@@ -85,13 +88,23 @@ def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -
     logger.info("Active trades count: %d", len(active_trades))
 
     active_symbols = collect_trade_symbols(active_trades)
-    if not active_symbols:
+    if active_symbols:
+        active_prices = fetch_prices(coindcx_client, active_symbols, "active trade TP/SL tracking")
+        for trade in active_trades:
+            process_active_trade(trade, active_prices, laravel_client)
+    else:
         logger.info("No active trade symbols to price-check.")
-        return
 
-    active_prices = fetch_prices(coindcx_client, active_symbols, "active trade TP/SL tracking")
-    for trade in active_trades:
-        process_active_trade(trade, active_prices, laravel_client)
+    post_sl_trades = extract_items(fetch_with_error("post-SL tracking trades", laravel_client.get_post_sl_tracking_trades))
+    logger.info("Post-SL tracking trades count: %d", len(post_sl_trades))
+
+    post_sl_symbols = collect_trade_symbols(post_sl_trades)
+    if post_sl_symbols:
+        post_sl_prices = fetch_prices(coindcx_client, post_sl_symbols, "post-SL tracking")
+        for trade in post_sl_trades:
+            process_post_sl_trade(trade, post_sl_prices, laravel_client)
+    else:
+        logger.info("No post-SL tracking trade symbols to price-check.")
 
 
 def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient) -> None:
@@ -215,6 +228,95 @@ def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiCl
     except Exception as exc:
         logger.exception("Failed to process active trade %s (%s): %s", trade_id, symbol or "unknown symbol", exc)
 
+
+
+def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient) -> None:
+    trade_id = (trade.get("id") or trade.get("simulated_trade_id")) if isinstance(trade, dict) else None
+    symbol = get_trade_symbol(trade)
+
+    try:
+        if not trade_id:
+            logger.warning("Skipping post-SL trade without id: %s", trade)
+            return
+
+        if not symbol:
+            logger.warning("Skipping post-SL trade %s without symbol.", trade_id)
+            return
+
+        price_data = prices.get(symbol) if isinstance(prices, dict) else None
+        if not price_data or not price_data.get("found"):
+            logger.warning("Price missing for post-SL trade %s %s.", trade_id, symbol)
+            return
+
+        current_price = safe_float(price_data.get("price"))
+        if current_price is None:
+            logger.warning("Price invalid for post-SL trade %s %s: %s", trade_id, symbol, price_data.get("price"))
+            return
+
+        logger.info("Price found for post-SL trade %s %s: %s", trade_id, symbol, current_price)
+
+        direction = get_trade_direction(trade)
+        if direction not in {"LONG", "SHORT"}:
+            logger.warning("Skipping post-SL trade %s %s with missing/invalid direction: %s", trade_id, symbol, direction)
+            return
+
+        entry_price = get_trade_entry_price(trade)
+        if entry_price is None or entry_price == 0:
+            logger.warning("Skipping post-SL trade %s %s metrics/events: missing or invalid entry_price.", trade_id, symbol)
+            return
+
+        trade_metrics = calculate_trade_metrics(trade, current_price)
+        event_time = timestamp()
+        metrics_payload = {
+            "simulated_trade_id": trade_id,
+            "current_price": trade_metrics["current_price"],
+            "actual_price_move_percent": trade_metrics["actual_price_move_percent"],
+            "leveraged_pnl_percent": trade_metrics["leveraged_pnl_percent"],
+            "price_timestamp": event_time,
+        }
+
+        try:
+            response = laravel_client.update_metrics(metrics_payload)
+            logger.info("Post-SL metrics updated for trade %s: %s", trade_id, summarize_response(response))
+        except Exception as exc:
+            logger.error("Post-SL metrics update failed for trade %s: %s", trade_id, exc)
+
+        tracking_until = trade.get("tracking_until")
+        if tracking_until and parse_post_sl_tracking_until(tracking_until) is None:
+            logger.warning(
+                "Post-SL tracking_until could not be parsed for trade %s (%s); continuing tracking safely.",
+                trade_id,
+                tracking_until,
+            )
+        elif is_post_sl_tracking_expired(trade, datetime.now(timezone.utc)):
+            close_payload = {
+                "simulated_trade_id": trade_id,
+                "exit_price": current_price,
+                "exit_reason": "POST_SL_TRACKING_COMPLETED",
+                "status": "completed",
+                "actual_price_move_percent": trade_metrics["actual_price_move_percent"],
+                "leveraged_pnl_percent": trade_metrics["leveraged_pnl_percent"],
+                "closed_at": event_time,
+                "notes": "Post-SL tracking completed after configured tracking period",
+            }
+            try:
+                response = laravel_client.close_trade(close_payload)
+                logger.info("Post-SL tracking completed for trade %s: %s", trade_id, summarize_response(response))
+            except Exception as exc:
+                logger.error("Post-SL close failed for trade %s: %s", trade_id, exc)
+            return
+
+        for event in detect_post_sl_events(trade, current_price):
+            logger.info(
+                "Detected post-SL event %s for trade %s at price %s, leveraged pnl %.2f%%",
+                event["event_type"],
+                trade_id,
+                event["event_price"],
+                event["leveraged_pnl_percent"],
+            )
+            store_trade_event(laravel_client, trade_id, event)
+    except Exception as exc:
+        logger.exception("Failed to process post-SL trade %s (%s): %s", trade_id, symbol or "unknown symbol", exc)
 
 def store_trade_event(laravel_client: LaravelApiClient, trade_id, event: dict) -> None:
     event_type = event["event_type"]
