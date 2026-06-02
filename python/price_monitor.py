@@ -81,7 +81,7 @@ def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -
     if pending_symbols:
         pending_prices = fetch_prices(coindcx_client, pending_symbols, "entry trigger checks")
         for signal in pending_signals:
-            process_pending_signal(signal, pending_prices, laravel_client)
+            process_pending_signal(signal, pending_prices, laravel_client, coindcx_client)
     else:
         logger.info("No pending signal symbols to price-check.")
 
@@ -92,7 +92,7 @@ def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -
     if active_symbols:
         active_prices = fetch_prices(coindcx_client, active_symbols, "active trade TP/SL tracking")
         for trade in active_trades:
-            process_active_trade(trade, active_prices, laravel_client)
+            process_active_trade(trade, active_prices, laravel_client, coindcx_client)
     else:
         logger.info("No active trade symbols to price-check.")
 
@@ -103,12 +103,12 @@ def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -
     if post_sl_symbols:
         post_sl_prices = fetch_prices(coindcx_client, post_sl_symbols, "post-SL tracking")
         for trade in post_sl_trades:
-            process_post_sl_trade(trade, post_sl_prices, laravel_client)
+            process_post_sl_trade(trade, post_sl_prices, laravel_client, coindcx_client)
     else:
         logger.info("No post-SL tracking trade symbols to price-check.")
 
 
-def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient) -> None:
+def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
     signal_id = signal.get("id")
     symbol = normalize_symbol(signal.get("symbol") or signal.get("pair"))
 
@@ -179,12 +179,23 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
         }
         response = laravel_client.entry_triggered(payload)
         logger.info("Laravel entry-triggered API succeeded for signal %s: %s", signal_id, summarize_response(response))
+        simulated_trade_id = extract_simulated_trade_id(response)
+        store_market_context_snapshot(
+            laravel_client,
+            coindcx_client,
+            {
+                "trade_signal_id": signal_id,
+                "simulated_trade_id": simulated_trade_id,
+                "symbol": symbol,
+                "snapshot_type": "entry_triggered",
+            },
+        )
     except Exception as exc:
         logger.exception("Failed to process pending signal %s (%s): %s", signal_id, symbol or "unknown symbol", exc)
 
 
 
-def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient) -> None:
+def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
     trade_id = (trade.get("id") or trade.get("simulated_trade_id")) if isinstance(trade, dict) else None
     symbol = get_trade_symbol(trade)
 
@@ -253,7 +264,7 @@ def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiCl
 
 
 
-def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient) -> None:
+def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
     trade_id = (trade.get("id") or trade.get("simulated_trade_id")) if isinstance(trade, dict) else None
     symbol = get_trade_symbol(trade)
 
@@ -325,6 +336,16 @@ def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiC
             try:
                 response = laravel_client.close_trade(close_payload)
                 logger.info("Post-SL tracking completed for trade %s: %s", trade_id, summarize_response(response))
+                store_market_context_snapshot(
+                    laravel_client,
+                    coindcx_client,
+                    {
+                        "trade_signal_id": trade.get("trade_signal_id"),
+                        "simulated_trade_id": trade_id,
+                        "symbol": symbol,
+                        "snapshot_type": "trade_closed",
+                    },
+                )
             except Exception as exc:
                 logger.error("Post-SL close failed for trade %s: %s", trade_id, exc)
             return
@@ -365,6 +386,49 @@ def store_trade_event(laravel_client: LaravelApiClient, trade_id, event: dict) -
     except Exception as exc:
         logger.error("Laravel event store failed for trade %s %s: %s", trade_id, event_type, exc)
 
+
+
+def store_market_context_snapshot(
+    laravel_client: LaravelApiClient,
+    coindcx_client: CoinDCXClient,
+    base_payload: dict,
+) -> None:
+    snapshot_type = base_payload.get("snapshot_type")
+    try:
+        market_context = coindcx_client.get_market_context()
+        payload = {
+            **base_payload,
+            "btc_price": market_context.get("btc_price"),
+            "btc_24h_change_percent": market_context.get("btc_24h_change_percent"),
+            "eth_price": market_context.get("eth_price"),
+            "eth_24h_change_percent": market_context.get("eth_24h_change_percent"),
+            "market_condition": market_context.get("market_condition"),
+            "captured_at": market_context.get("captured_at"),
+            "raw_payload": market_context.get("raw") or {},
+        }
+        response = laravel_client.store_market_snapshot(payload)
+        logger.info(
+            "Market snapshot stored for %s: %s",
+            snapshot_type,
+            summarize_response(response),
+        )
+    except Exception as exc:
+        logger.error("Market snapshot store failed for %s: %s", snapshot_type, exc)
+
+
+def extract_simulated_trade_id(response) -> int | None:
+    if not isinstance(response, dict):
+        return None
+
+    data = response.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    simulated_trade = data.get("simulated_trade")
+    if isinstance(simulated_trade, dict):
+        return simulated_trade.get("id") or simulated_trade.get("simulated_trade_id")
+
+    return data.get("simulated_trade_id")
 
 def collect_symbols(signals: list[dict]) -> list[str]:
     symbols = []

@@ -147,3 +147,21 @@ Every post-SL event stores:
 - `event_timestamp`
 
 After the configured tracking window expires, Python closes the trade through Laravel's `simulated-trades/close` API with `status=completed` and `exit_reason=POST_SL_TRACKING_COMPLETED`. This remains simulation/tracking only: no live orders are placed, no authenticated CoinDCX APIs are used, no WebSocket is added, and no Telegram integration is performed.
+
+## Market Snapshot Logic
+
+Market snapshots capture simple market context for later review and strategy analysis. Snapshots are recorded at these Phase 1 lifecycle points:
+
+- Signal save time, when a structured signal is confirmed in Laravel.
+- Entry trigger time, when Python detects that a pending signal entered its configured range and records the simulated entry.
+- Trade close time, when Python closes a simulated trade after post-SL tracking completes.
+
+The MVP market condition uses BTC and ETH 24h change percentages:
+
+- BTC and ETH both greater than `+1.5%` = `bullish`.
+- BTC and ETH both less than `-1.5%` = `bearish`.
+- Otherwise = `sideways`.
+
+Signal-save snapshots may have null BTC/ETH price and 24h change values because Laravel does not fetch CoinDCX market data. Python captures real BTC/ETH public REST market context during entry and close snapshots when CoinDCX provides the ticker data.
+
+This remains market context tracking only. No live trading is performed, no authenticated CoinDCX APIs are used, no WebSocket is added, and no Telegram integration is performed.
