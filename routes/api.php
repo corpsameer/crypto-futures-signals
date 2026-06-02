@@ -16,6 +16,7 @@ Route::prefix('cryptofuturesignals/api')
         })->name('health');
 
         Route::get('/trade-signals/pending', [MonitorApiController::class, 'pendingSignals'])->name('trade-signals.pending');
+        Route::post('/trade-signals/mark-entry-missed', [MonitorApiController::class, 'markEntryMissed'])->name('trade-signals.mark-entry-missed');
         Route::get('/simulated-trades/active', [MonitorApiController::class, 'activeTrades'])->name('simulated-trades.active');
         Route::get('/simulated-trades/post-sl-tracking', [MonitorApiController::class, 'postSlTrackingTrades'])->name('simulated-trades.post-sl-tracking');
         Route::post('/simulated-trades/entry-triggered', [MonitorApiController::class, 'entryTriggered'])->name('simulated-trades.entry-triggered');
