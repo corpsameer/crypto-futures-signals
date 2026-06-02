@@ -38,10 +38,12 @@ class PastedSignalController extends Controller
         ]);
 
         $parserResult = $parser->parse($validated['raw_text']);
+        $parsedTraderName = $parserResult['data']['trader_name'] ?? null;
+        $traderName = $validated['trader_name'] ?? $parsedTraderName;
 
         $pastedSignal = PastedSignal::create([
             'user_id' => auth()->id(),
-            'trader_name' => $validated['trader_name'] ?? null,
+            'trader_name' => $traderName,
             'raw_text' => $validated['raw_text'],
             'parsed_payload' => $parserResult,
             'parse_status' => $parserResult['success']
@@ -127,6 +129,7 @@ class PastedSignalController extends Controller
         $parsedPayload = is_array($pastedSignal->parsed_payload) ? $pastedSignal->parsed_payload : [];
 
         $pastedSignal->update([
+            'trader_name' => $validated['trader_name'] ?? null,
             'parse_status' => PastedSignal::PARSE_STATUS_MANUALLY_CORRECTED,
             'parse_error' => null,
             'parsed_payload' => [
