@@ -9,6 +9,13 @@ from datetime import datetime, timezone
 ENTRY_TOLERANCE_PERCENT = 0.05
 ENTRY_EXECUTION_STYLE = "simulated_limit"
 ORDER_RELIABILITY_NOTE = "MVP uses simulated limit-style entry trigger; no live order placed."
+GAIN_MILESTONES = (
+    (3.0, "GAIN_3_PERCENT"),
+    (3.5, "GAIN_3_5_PERCENT"),
+    (5.0, "GAIN_5_PERCENT"),
+    (7.0, "GAIN_7_PERCENT"),
+)
+MILESTONE_EPSILON = 1e-9
 
 
 def normalize_symbol(symbol: str) -> str:
@@ -171,6 +178,52 @@ def calculate_move_percent(direction: str, entry_price: float, current_price: fl
 
 def calculate_leveraged_pnl_percent(actual_move_percent: float, leverage: float) -> float:
     return actual_move_percent * leverage
+
+
+def detect_gain_milestone_events(trade: dict, current_price: float) -> list[dict]:
+    """Detect leveraged gain milestone events for an active simulated trade."""
+    price = safe_float(current_price)
+    entry_price = get_trade_entry_price(trade)
+    leverage = get_trade_leverage(trade)
+    direction = get_trade_direction(trade)
+
+    if price is None or entry_price is None or entry_price == 0:
+        return []
+
+    if direction not in {"LONG", "SHORT"}:
+        return []
+
+    actual_move_percent = calculate_move_percent(direction, entry_price, price)
+    leveraged_pnl_percent = calculate_leveraged_pnl_percent(actual_move_percent, leverage)
+
+    if leveraged_pnl_percent <= 0:
+        return []
+
+    events = []
+    event_timestamp = datetime.now(timezone.utc).isoformat()
+    for milestone_percent, event_type in GAIN_MILESTONES:
+        if leveraged_pnl_percent + MILESTONE_EPSILON < milestone_percent:
+            continue
+
+        milestone_label = _format_percent(milestone_percent)
+        events.append(
+            {
+                "event_type": event_type,
+                "event_price": price,
+                "actual_price_move_percent": actual_move_percent,
+                "leveraged_pnl_percent": leveraged_pnl_percent,
+                "event_timestamp": event_timestamp,
+                "metadata": {
+                    "milestone_percent": milestone_percent,
+                    "current_price": price,
+                    "entry_price": entry_price,
+                    "source": "python_monitor",
+                },
+                "notes": f"Leveraged gain milestone {milestone_label}% reached",
+            }
+        )
+
+    return events
 
 
 def detect_tp_sl_events(trade: dict, current_price: float) -> list[dict]:
@@ -343,6 +396,13 @@ def _stop_loss_hit(direction: str, current_price: float, stop_loss: float) -> bo
     return current_price <= stop_loss
 
 
+def _format_percent(value: float) -> str:
+    if float(value).is_integer():
+        return str(int(value))
+
+    return str(value)
+
+
 def _normalize_direction(direction) -> str:
     return str(direction or "").strip().upper()
 
@@ -401,12 +461,13 @@ def _run_entry_trigger_tests() -> int:
             failures.append(name)
 
     failures.extend(_run_tp_sl_tests())
+    failures.extend(_run_gain_milestone_tests())
 
     if failures:
         print(f"Trade logic tests failed: {', '.join(failures)}")
         return 1
 
-    print("All entry trigger and TP/SL test cases pass.")
+    print("All entry trigger, TP/SL, and gain milestone test cases pass.")
     return 0
 
 
@@ -488,6 +549,89 @@ def _run_tp_sl_tests() -> list[str]:
             failures.append(name)
 
     return failures
+
+
+def _run_gain_milestone_tests() -> list[str]:
+    test_cases = [
+        (
+            "Gain A) LONG 3% milestone",
+            {"direction": "LONG", "entry_price": 100, "leverage": 5},
+            100.6,
+            ["GAIN_3_PERCENT"],
+            0.6,
+            3.0,
+        ),
+        (
+            "Gain B) LONG 3.5% milestone",
+            {"direction": "LONG", "entry_price": 100, "leverage": 5},
+            100.7,
+            ["GAIN_3_PERCENT", "GAIN_3_5_PERCENT"],
+            0.7,
+            3.5,
+        ),
+        (
+            "Gain C) LONG 5% milestone",
+            {"direction": "LONG", "entry_price": 100, "leverage": 5},
+            101,
+            ["GAIN_3_PERCENT", "GAIN_3_5_PERCENT", "GAIN_5_PERCENT"],
+            1.0,
+            5.0,
+        ),
+        (
+            "Gain D) LONG 7% milestone",
+            {"direction": "LONG", "entry_price": 100, "leverage": 5},
+            101.4,
+            ["GAIN_3_PERCENT", "GAIN_3_5_PERCENT", "GAIN_5_PERCENT", "GAIN_7_PERCENT"],
+            1.4,
+            7.0,
+        ),
+        (
+            "Gain E) SHORT 3% milestone",
+            {"direction": "SHORT", "entry_price": 100, "leverage": 5},
+            99.4,
+            ["GAIN_3_PERCENT"],
+            0.6,
+            3.0,
+        ),
+        (
+            "Gain F) SHORT losing trade",
+            {"direction": "SHORT", "entry_price": 100, "leverage": 5},
+            101,
+            [],
+            None,
+            None,
+        ),
+        (
+            "Gain G) Missing entry price",
+            {"direction": "LONG", "leverage": 5},
+            101,
+            [],
+            None,
+            None,
+        ),
+    ]
+
+    failures = []
+    for name, trade, current_price, expected_types, expected_move, expected_pnl in test_cases:
+        events = detect_gain_milestone_events(trade, current_price)
+        actual_types = [event["event_type"] for event in events]
+        passed = actual_types == expected_types
+
+        if passed and events and expected_move is not None and expected_pnl is not None:
+            passed = (
+                round(events[-1]["actual_price_move_percent"], 8) == round(expected_move, 8)
+                and round(events[-1]["leveraged_pnl_percent"], 8) == round(expected_pnl, 8)
+                and all(event["event_price"] == safe_float(current_price) for event in events)
+                and all(event.get("event_timestamp") for event in events)
+            )
+
+        status = "PASS" if passed else "FAIL"
+        print(f"{status}: {name} expected={expected_types} actual={actual_types}")
+        if not passed:
+            failures.append(name)
+
+    return failures
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run trade logic helper checks.")

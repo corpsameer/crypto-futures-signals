@@ -77,3 +77,21 @@ The monitor also tracks active simulated trades created by Laravel. On each moni
 - Every TP/SL event payload includes `event_price`, `actual_price_move_percent`, `leveraged_pnl_percent`, and `event_timestamp`.
 - TP events store the planned target price in metadata, while SL events store the configured stop loss in metadata. In both cases, `event_price` is the observed public CoinDCX price at detection time.
 - No live orders are placed, no authenticated CoinDCX APIs are used, and no Telegram integration is performed.
+
+## Custom Gain Milestone Tracking
+
+Active simulated trades are also checked for custom leveraged gain milestones on each monitor run.
+
+- Tracked leveraged gain milestones: 3%, 3.5%, 5%, and 7%.
+- Created event types:
+  - `GAIN_3_PERCENT`
+  - `GAIN_3_5_PERCENT`
+  - `GAIN_5_PERCENT`
+  - `GAIN_7_PERCENT`
+- Each milestone event stores:
+  - `event_price`
+  - `actual_price_move_percent`
+  - `leveraged_pnl_percent`
+  - `event_timestamp`
+- Laravel handles event idempotency, so repeated monitor runs can safely update the same `simulated_trade_id` + `event_type` instead of duplicating rows.
+- No live orders are placed, no authenticated CoinDCX APIs are used, and no Telegram integration is performed.
