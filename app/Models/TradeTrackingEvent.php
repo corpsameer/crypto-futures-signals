@@ -60,6 +60,33 @@ class TradeTrackingEvent extends Model
         'metadata' => 'array',
     ];
 
+    /**
+     * @return list<string>
+     */
+    public static function allowedTypes(): array
+    {
+        return [
+            self::EVENT_ENTRY_TRIGGERED,
+            self::EVENT_GAIN_3_PERCENT,
+            self::EVENT_GAIN_3_5_PERCENT,
+            self::EVENT_GAIN_5_PERCENT,
+            self::EVENT_GAIN_7_PERCENT,
+            self::EVENT_TP1_HIT,
+            self::EVENT_TP2_HIT,
+            self::EVENT_TP3_HIT,
+            self::EVENT_TP4_HIT,
+            self::EVENT_SL_HIT,
+            self::EVENT_SL_TO_BREAKEVEN,
+            self::EVENT_POST_SL_TP1_HIT,
+            self::EVENT_POST_SL_TP2_HIT,
+            self::EVENT_POST_SL_TP3_HIT,
+            self::EVENT_POST_SL_TP4_HIT,
+            self::EVENT_POST_SL_MAX_GAIN,
+            self::EVENT_TRADE_EXPIRED,
+            self::EVENT_TRADE_CLOSED,
+        ];
+    }
+
     public function simulatedTrade(): BelongsTo
     {
         return $this->belongsTo(SimulatedTrade::class);
