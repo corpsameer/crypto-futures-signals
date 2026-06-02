@@ -64,3 +64,16 @@ Run the local entry trigger test cases with:
 ```bash
 python python/trade_logic.py --test
 ```
+
+## TP/SL Tracking
+
+The monitor also tracks active simulated trades created by Laravel. On each monitor run:
+
+- Active trades are fetched from Laravel using the `simulated-trades/active` API.
+- The latest unauthenticated public CoinDCX REST price is checked for each active trade symbol.
+- Current metrics are updated through Laravel's `simulated-trades/update-metrics` API on every monitor run when a valid current price and entry price are available.
+- TP/SL events are detected in Python and sent to Laravel's `trade-events/store` API.
+- Laravel handles event idempotency, so the same `simulated_trade_id` + `event_type` can be safely recorded/updated by repeated monitor runs without Python keeping local duplicate state.
+- Every TP/SL event payload includes `event_price`, `actual_price_move_percent`, `leveraged_pnl_percent`, and `event_timestamp`.
+- TP events store the planned target price in metadata, while SL events store the configured stop loss in metadata. In both cases, `event_price` is the observed public CoinDCX price at detection time.
+- No live orders are placed, no authenticated CoinDCX APIs are used, and no Telegram integration is performed.
