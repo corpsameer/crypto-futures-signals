@@ -106,17 +106,38 @@ class MonitorApiController extends Controller
                 'entry_triggered_at' => $eventTimestamp,
                 'stop_loss' => $tradeSignal->stop_loss,
                 'current_price' => $currentPrice,
+                'max_price_after_entry' => $entryPrice,
+                'min_price_after_entry' => $entryPrice,
                 'max_price' => $entryPrice,
                 'min_price' => $entryPrice,
                 'max_actual_price_move_percent' => $actualMove,
                 'max_leveraged_pnl_percent' => $leveragedPnl,
                 'min_actual_price_move_percent' => $actualMove,
                 'min_leveraged_pnl_percent' => $leveragedPnl,
+                'max_actual_gain_percent' => $actualMove,
+                'max_actual_loss_percent' => $actualMove,
+                'max_gain_percent' => $leveragedPnl,
+                'max_loss_percent' => $leveragedPnl,
                 'status' => SimulatedTrade::STATUS_ACTIVE,
                 'tracking_until' => now()->addDays($this->trackingDays()),
             ];
 
             if ($simulatedTrade) {
+                $payload = array_merge($payload, [
+                    'max_price_after_entry' => $this->greaterValue($entryPrice, $simulatedTrade->max_price_after_entry ?? $simulatedTrade->max_price),
+                    'min_price_after_entry' => $this->lowerValue($entryPrice, $simulatedTrade->min_price_after_entry ?? $simulatedTrade->min_price),
+                    'max_price' => $this->greaterValue($entryPrice, $simulatedTrade->max_price),
+                    'min_price' => $this->lowerValue($entryPrice, $simulatedTrade->min_price),
+                    'max_actual_price_move_percent' => $this->greaterValue($actualMove, $simulatedTrade->max_actual_price_move_percent),
+                    'max_leveraged_pnl_percent' => $this->greaterValue($leveragedPnl, $simulatedTrade->max_leveraged_pnl_percent),
+                    'min_actual_price_move_percent' => $this->lowerValue($actualMove, $simulatedTrade->min_actual_price_move_percent),
+                    'min_leveraged_pnl_percent' => $this->lowerValue($leveragedPnl, $simulatedTrade->min_leveraged_pnl_percent),
+                    'max_actual_gain_percent' => $this->greaterValue($actualMove, $simulatedTrade->max_actual_gain_percent ?? $simulatedTrade->max_actual_price_move_percent),
+                    'max_actual_loss_percent' => $this->lowerValue($actualMove, $simulatedTrade->max_actual_loss_percent ?? $simulatedTrade->min_actual_price_move_percent),
+                    'max_gain_percent' => $this->greaterValue($leveragedPnl, $simulatedTrade->max_gain_percent ?? $simulatedTrade->max_leveraged_pnl_percent),
+                    'max_loss_percent' => $this->lowerValue($leveragedPnl, $simulatedTrade->max_loss_percent ?? $simulatedTrade->min_leveraged_pnl_percent),
+                ]);
+
                 $simulatedTrade->fill($payload);
                 $simulatedTrade->save();
             } else {
@@ -211,20 +232,31 @@ class MonitorApiController extends Controller
             'price_timestamp' => ['nullable', 'date'],
         ]);
 
-        $simulatedTrade = SimulatedTrade::findOrFail($validated['simulated_trade_id']);
         $currentPrice = $validated['current_price'];
         $actualMove = $validated['actual_price_move_percent'];
         $leveragedPnl = $validated['leveraged_pnl_percent'];
 
-        $simulatedTrade->fill([
-            'current_price' => $currentPrice,
-            'max_price' => $this->greaterValue($currentPrice, $simulatedTrade->max_price),
-            'min_price' => $this->lowerValue($currentPrice, $simulatedTrade->min_price),
-            'max_actual_price_move_percent' => $this->greaterValue($actualMove, $simulatedTrade->max_actual_price_move_percent),
-            'max_leveraged_pnl_percent' => $this->greaterValue($leveragedPnl, $simulatedTrade->max_leveraged_pnl_percent),
-            'min_actual_price_move_percent' => $this->lowerValue($actualMove, $simulatedTrade->min_actual_price_move_percent),
-            'min_leveraged_pnl_percent' => $this->lowerValue($leveragedPnl, $simulatedTrade->min_leveraged_pnl_percent),
-        ])->save();
+        $simulatedTrade = DB::transaction(function () use ($validated, $currentPrice, $actualMove, $leveragedPnl): SimulatedTrade {
+            $simulatedTrade = SimulatedTrade::query()->lockForUpdate()->findOrFail($validated['simulated_trade_id']);
+
+            $simulatedTrade->fill([
+                'current_price' => $currentPrice,
+                'max_price_after_entry' => $this->greaterValue($currentPrice, $simulatedTrade->max_price_after_entry ?? $simulatedTrade->max_price),
+                'min_price_after_entry' => $this->lowerValue($currentPrice, $simulatedTrade->min_price_after_entry ?? $simulatedTrade->min_price),
+                'max_price' => $this->greaterValue($currentPrice, $simulatedTrade->max_price),
+                'min_price' => $this->lowerValue($currentPrice, $simulatedTrade->min_price),
+                'max_actual_price_move_percent' => $this->greaterValue($actualMove, $simulatedTrade->max_actual_price_move_percent),
+                'max_leveraged_pnl_percent' => $this->greaterValue($leveragedPnl, $simulatedTrade->max_leveraged_pnl_percent),
+                'min_actual_price_move_percent' => $this->lowerValue($actualMove, $simulatedTrade->min_actual_price_move_percent),
+                'min_leveraged_pnl_percent' => $this->lowerValue($leveragedPnl, $simulatedTrade->min_leveraged_pnl_percent),
+                'max_actual_gain_percent' => $this->greaterValue($actualMove, $simulatedTrade->max_actual_gain_percent ?? $simulatedTrade->max_actual_price_move_percent),
+                'max_actual_loss_percent' => $this->lowerValue($actualMove, $simulatedTrade->max_actual_loss_percent ?? $simulatedTrade->min_actual_price_move_percent),
+                'max_gain_percent' => $this->greaterValue($leveragedPnl, $simulatedTrade->max_gain_percent ?? $simulatedTrade->max_leveraged_pnl_percent),
+                'max_loss_percent' => $this->lowerValue($leveragedPnl, $simulatedTrade->max_loss_percent ?? $simulatedTrade->min_leveraged_pnl_percent),
+            ])->save();
+
+            return $simulatedTrade;
+        });
 
         return response()->json([
             'success' => true,

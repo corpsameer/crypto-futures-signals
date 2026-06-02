@@ -180,6 +180,32 @@ def calculate_leveraged_pnl_percent(actual_move_percent: float, leverage: float)
     return actual_move_percent * leverage
 
 
+def calculate_trade_metrics(trade: dict, current_price: float) -> dict:
+    """Calculate current price, actual move, and leveraged P&L for a trade."""
+    price = safe_float(current_price)
+    entry_price = get_trade_entry_price(trade)
+    direction = get_trade_direction(trade)
+    leverage = get_trade_leverage(trade)
+
+    if price is None:
+        raise ValueError("current_price must be numeric.")
+
+    if entry_price is None or entry_price == 0:
+        raise ValueError("trade entry_price must be numeric and non-zero.")
+
+    if direction not in {"LONG", "SHORT"}:
+        raise ValueError("trade direction must be LONG or SHORT.")
+
+    actual_move_percent = calculate_move_percent(direction, entry_price, price)
+    leveraged_pnl_percent = calculate_leveraged_pnl_percent(actual_move_percent, leverage)
+
+    return {
+        "current_price": price,
+        "actual_price_move_percent": actual_move_percent,
+        "leveraged_pnl_percent": leveraged_pnl_percent,
+    }
+
+
 def detect_gain_milestone_events(trade: dict, current_price: float) -> list[dict]:
     """Detect leveraged gain milestone events for an active simulated trade."""
     price = safe_float(current_price)
@@ -462,12 +488,13 @@ def _run_entry_trigger_tests() -> int:
 
     failures.extend(_run_tp_sl_tests())
     failures.extend(_run_gain_milestone_tests())
+    failures.extend(_run_trade_metrics_tests())
 
     if failures:
         print(f"Trade logic tests failed: {', '.join(failures)}")
         return 1
 
-    print("All entry trigger, TP/SL, and gain milestone test cases pass.")
+    print("All entry trigger, TP/SL, gain milestone, and trade metrics test cases pass.")
     return 0
 
 
@@ -627,6 +654,40 @@ def _run_gain_milestone_tests() -> list[str]:
 
         status = "PASS" if passed else "FAIL"
         print(f"{status}: {name} expected={expected_types} actual={actual_types}")
+        if not passed:
+            failures.append(name)
+
+    return failures
+
+
+def _run_trade_metrics_tests() -> list[str]:
+    test_cases = [
+        (
+            "Metrics A) LONG gain",
+            {"direction": "LONG", "entry_price": 100, "leverage": 5},
+            101,
+            {"current_price": 101, "actual_price_move_percent": 1.0, "leveraged_pnl_percent": 5.0},
+        ),
+        (
+            "Metrics B) SHORT gain",
+            {"direction": "SHORT", "entry_price": 100, "leverage": 5},
+            99,
+            {"current_price": 99, "actual_price_move_percent": 1.0, "leveraged_pnl_percent": 5.0},
+        ),
+        (
+            "Metrics C) SHORT loss",
+            {"direction": "SHORT", "entry_price": 100, "leverage": 5},
+            101,
+            {"current_price": 101, "actual_price_move_percent": -1.0, "leveraged_pnl_percent": -5.0},
+        ),
+    ]
+
+    failures = []
+    for name, trade, current_price, expected in test_cases:
+        metrics = calculate_trade_metrics(trade, current_price)
+        passed = all(round(metrics[key], 8) == round(value, 8) for key, value in expected.items())
+        status = "PASS" if passed else "FAIL"
+        print(f"{status}: {name} expected={expected} actual={metrics}")
         if not passed:
             failures.append(name)
 

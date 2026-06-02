@@ -221,20 +221,30 @@
                     <table class="table table-striped table-hover align-middle mb-0">
                         <thead class="table-light">
                             <tr>
-                                <th>ID</th><th>Status</th><th>Entry Price</th><th>Current Price</th><th>Max Price</th><th>Min Price</th><th>Max Leveraged P&amp;L %</th><th>Min Leveraged P&amp;L %</th><th>Exit Price</th><th>Exit Reason</th><th>Entry Triggered At</th><th>Closed At</th>
+                                <th>ID</th><th>Status</th><th>Entry Price</th><th>Current Price</th><th>Max Price After Entry</th><th>Min Price After Entry</th><th>Max Actual Gain %</th><th>Max Actual Loss %</th><th>Max Gain % Leveraged</th><th>Max Loss % Leveraged</th><th>Exit Price</th><th>Exit Reason</th><th>Entry Triggered At</th><th>Closed At</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach ($tradeSignal->simulatedTrades as $simulatedTrade)
+                                @php
+                                    $maxPriceAfterEntry = $simulatedTrade->max_price_after_entry ?? $simulatedTrade->max_price;
+                                    $minPriceAfterEntry = $simulatedTrade->min_price_after_entry ?? $simulatedTrade->min_price;
+                                    $maxActualGainPercent = $simulatedTrade->max_actual_gain_percent ?? $simulatedTrade->max_actual_price_move_percent;
+                                    $maxActualLossPercent = $simulatedTrade->max_actual_loss_percent ?? $simulatedTrade->min_actual_price_move_percent;
+                                    $maxGainPercent = $simulatedTrade->max_gain_percent ?? $simulatedTrade->max_leveraged_pnl_percent;
+                                    $maxLossPercent = $simulatedTrade->max_loss_percent ?? $simulatedTrade->min_leveraged_pnl_percent;
+                                @endphp
                                 <tr>
                                     <td>{{ $simulatedTrade->id }}</td>
                                     <td>{{ $display($simulatedTrade->status) }}</td>
                                     <td>{{ $display($simulatedTrade->entry_price) }}</td>
                                     <td>{{ $display($simulatedTrade->current_price) }}</td>
-                                    <td>{{ $display($simulatedTrade->max_price) }}</td>
-                                    <td>{{ $display($simulatedTrade->min_price) }}</td>
-                                    <td>{{ $percentDisplay($simulatedTrade->max_leveraged_pnl_percent) }}</td>
-                                    <td>{{ $percentDisplay($simulatedTrade->min_leveraged_pnl_percent) }}</td>
+                                    <td>{{ $display($maxPriceAfterEntry) }}</td>
+                                    <td>{{ $display($minPriceAfterEntry) }}</td>
+                                    <td>{{ $percentDisplay($maxActualGainPercent) }}</td>
+                                    <td>{{ $percentDisplay($maxActualLossPercent) }}</td>
+                                    <td>{{ $percentDisplay($maxGainPercent) }}</td>
+                                    <td>{{ $percentDisplay($maxLossPercent) }}</td>
                                     <td>{{ $display($simulatedTrade->exit_price) }}</td>
                                     <td>{{ $display($simulatedTrade->exit_reason) }}</td>
                                     <td>{{ $dateDisplay($simulatedTrade->entry_triggered_at) }}</td>
