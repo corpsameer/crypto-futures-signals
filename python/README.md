@@ -48,3 +48,19 @@ python python/coindcx_client.py --symbols ICPUSDT CHZ/USDT OPUSDT
 ```
 
 The client uses the public CoinDCX REST ticker configured by `COINDCX_MARKET_URL`. Missing symbols are logged safely and reported as `found=False` with `price=None`. This test does not perform live trading and does not use authenticated CoinDCX APIs.
+
+## Entry Trigger Logic
+
+The monitor now checks pending Laravel trade signals against current public CoinDCX REST prices and simulates entry execution only.
+
+- For `LONG` signals, the planned entry is the upper bound of the normalized entry range (`max(entry_min, entry_max)`). Entry triggers when the current price is less than or equal to that planned entry.
+- For `SHORT` signals, the planned entry is the lower bound of the normalized entry range (`min(entry_min, entry_max)`). Entry triggers when the current price is greater than or equal to that planned entry.
+- The MVP records simulated limit-style behavior with `entry_execution_style=simulated_limit`; it does not place live orders and does not use authenticated CoinDCX APIs.
+- When a pending signal triggers, Python calls Laravel's `simulated-trades/entry-triggered` API. Laravel creates or updates the simulated trade, creates the `ENTRY_TRIGGERED` event, stores the event price/move/PnL fields, and marks the signal active.
+- Python does not create a separate `ENTRY_TRIGGERED` event because Laravel handles that idempotently through the entry-triggered endpoint.
+
+Run the local entry trigger test cases with:
+
+```bash
+python python/trade_logic.py --test
+```
