@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\MarketSnapshot;
 use App\Models\PastedSignal;
 use App\Models\TradeSignal;
 use App\Services\SignalParserService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
 
 class PastedSignalController extends Controller
@@ -117,13 +119,41 @@ class PastedSignalController extends Controller
             max((float) $validated['entry_min'], (float) $validated['entry_max']),
         ];
 
-        TradeSignal::updateOrCreate(
+        $tradeSignal = TradeSignal::updateOrCreate(
             ['pasted_signal_id' => $pastedSignal->id],
             array_merge($validated, [
                 'pasted_signal_id' => $pastedSignal->id,
                 'user_id' => auth()->id(),
                 'status' => TradeSignal::STATUS_PENDING_ENTRY,
             ])
+        );
+
+        $capturedAt = now();
+        $marketSnapshotPayload = [
+            'simulated_trade_id' => null,
+            'symbol' => $tradeSignal->symbol ?: 'MARKET',
+            'market_condition' => null,
+            'btc_price' => null,
+            'btc_24h_change_percent' => null,
+            'eth_price' => null,
+            'eth_24h_change_percent' => null,
+            'captured_at' => $capturedAt,
+            'raw_payload' => [
+                'source' => 'laravel_signal_confirm',
+                'note' => 'Market prices will be captured by Python monitor when available',
+            ],
+        ];
+
+        if (Schema::hasColumn('market_snapshots', 'snapshot_at')) {
+            $marketSnapshotPayload['snapshot_at'] = $capturedAt;
+        }
+
+        MarketSnapshot::updateOrCreate(
+            [
+                'trade_signal_id' => $tradeSignal->id,
+                'snapshot_type' => MarketSnapshot::SNAPSHOT_SIGNAL_SAVED,
+            ],
+            $marketSnapshotPayload
         );
 
         $parsedPayload = is_array($pastedSignal->parsed_payload) ? $pastedSignal->parsed_payload : [];

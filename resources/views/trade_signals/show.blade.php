@@ -293,11 +293,33 @@
             @if ($tradeSignal->marketSnapshots->isNotEmpty())
                 <div class="table-responsive">
                     <table class="table table-striped table-hover align-middle mb-0">
-                        <thead class="table-light"><tr><th>Snapshot Type</th><th>Price</th><th>Volume 24h</th><th>24h Change %</th><th>Funding Rate</th><th>Open Interest</th><th>Snapshot At</th></tr></thead>
+                        <thead class="table-light">
+                            <tr>
+                                <th>Snapshot Type</th>
+                                <th>Market Condition</th>
+                                <th>BTC Price</th>
+                                <th>BTC 24h Change %</th>
+                                <th>ETH Price</th>
+                                <th>ETH 24h Change %</th>
+                                <th>Captured At</th>
+                                <th>Price</th>
+                                <th>Volume 24h</th>
+                                <th>24h Change %</th>
+                                <th>Funding Rate</th>
+                                <th>Open Interest</th>
+                                <th>Snapshot At</th>
+                            </tr>
+                        </thead>
                         <tbody>
                             @foreach ($tradeSignal->marketSnapshots as $marketSnapshot)
                                 <tr>
                                     <td>{{ $display($marketSnapshot->snapshot_type) }}</td>
+                                    <td>{{ $display($marketSnapshot->market_condition) }}</td>
+                                    <td>{{ $display($marketSnapshot->btc_price) }}</td>
+                                    <td>{{ $percentDisplay($marketSnapshot->btc_24h_change_percent) }}</td>
+                                    <td>{{ $display($marketSnapshot->eth_price) }}</td>
+                                    <td>{{ $percentDisplay($marketSnapshot->eth_24h_change_percent) }}</td>
+                                    <td>{{ $dateDisplay($marketSnapshot->captured_at) }}</td>
                                     <td>{{ $display($marketSnapshot->price) }}</td>
                                     <td>{{ $display($marketSnapshot->volume_24h) }}</td>
                                     <td>{{ $percentDisplay($marketSnapshot->price_change_24h_percent) }}</td>

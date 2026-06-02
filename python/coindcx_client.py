@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -87,6 +88,34 @@ class CoinDCXClient:
 
         return None
 
+    def extract_24h_change_percent(self, row: dict) -> float | None:
+        """Extract a 24h change percentage from a ticker row when CoinDCX provides one."""
+        if not isinstance(row, dict):
+            return None
+
+        for key in (
+            "change_24_hour",
+            "change_24h",
+            "price_change_percent",
+            "price_change_percentage_24h",
+            "percent_change_24h",
+            "change",
+            "pc",
+        ):
+            value = row.get(key)
+            if value is None or value == "":
+                continue
+
+            if isinstance(value, str):
+                value = value.strip().rstrip("%")
+
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+
+        return None
+
     def get_price_map(self) -> dict:
         """Return the latest valid ticker price data keyed by normalized symbol."""
         price_map = {}
@@ -104,6 +133,7 @@ class CoinDCXClient:
             price_map[symbol] = {
                 "symbol": symbol,
                 "last_price": price,
+                "change_24h_percent": self.extract_24h_change_percent(row),
                 "raw": row,
             }
 
@@ -132,10 +162,35 @@ class CoinDCXClient:
             prices[symbol] = {
                 "found": True,
                 "price": ticker["last_price"],
+                "change_24h_percent": ticker.get("change_24h_percent"),
                 "raw": ticker["raw"],
             }
 
         return prices
+
+
+    def get_market_context(self) -> dict:
+        """Return simple BTC/ETH market context for Laravel market snapshots."""
+        price_map = self.get_price_map()
+        btc_symbol = self.normalize_symbol("BTCUSDT")
+        eth_symbol = self.normalize_symbol("ETHUSDT")
+        btc = price_map.get(btc_symbol, {})
+        eth = price_map.get(eth_symbol, {})
+        btc_change = btc.get("change_24h_percent")
+        eth_change = eth.get("change_24h_percent")
+
+        return {
+            "btc_price": btc.get("last_price"),
+            "btc_24h_change_percent": btc_change,
+            "eth_price": eth.get("last_price"),
+            "eth_24h_change_percent": eth_change,
+            "market_condition": determine_market_condition(btc_change, eth_change),
+            "captured_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "raw": {
+                "BTCUSDT": btc.get("raw"),
+                "ETHUSDT": eth.get("raw"),
+            },
+        }
 
     def get_price(self, symbol: str) -> float | None:
         """Return the latest price for one symbol, or ``None`` when unavailable."""
@@ -162,6 +217,18 @@ class CoinDCXClient:
             return None
 
         return price
+
+
+def determine_market_condition(btc_change, eth_change) -> str:
+    """Classify the MVP market condition from BTC and ETH 24h change percentages."""
+    if btc_change is not None and eth_change is not None:
+        if btc_change > 1.5 and eth_change > 1.5:
+            return "bullish"
+
+        if btc_change < -1.5 and eth_change < -1.5:
+            return "bearish"
+
+    return "sideways"
 
 
 # Backward-compatible module helper for any existing imports.

@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
 class MonitorApiController extends Controller
@@ -414,36 +415,101 @@ class MonitorApiController extends Controller
         $validated = $request->validate([
             'trade_signal_id' => ['nullable', 'integer', 'exists:trade_signals,id'],
             'simulated_trade_id' => ['nullable', 'integer', 'exists:simulated_trades,id'],
-            'symbol' => ['required', 'string', 'max:50'],
-            'snapshot_type' => ['nullable', 'string', 'max:100'],
+            'symbol' => ['nullable', 'string', 'max:50'],
+            'snapshot_type' => ['required', 'string', 'max:100'],
             'price' => ['nullable', 'numeric'],
             'volume_24h' => ['nullable', 'numeric'],
             'price_change_24h_percent' => ['nullable', 'numeric'],
             'funding_rate' => ['nullable', 'numeric'],
             'open_interest' => ['nullable', 'numeric'],
+            'btc_price' => ['nullable', 'numeric'],
+            'btc_24h_change_percent' => ['nullable', 'numeric'],
+            'eth_price' => ['nullable', 'numeric'],
+            'eth_24h_change_percent' => ['nullable', 'numeric'],
+            'market_condition' => ['nullable', Rule::in([
+                MarketSnapshot::MARKET_CONDITION_BULLISH,
+                MarketSnapshot::MARKET_CONDITION_BEARISH,
+                MarketSnapshot::MARKET_CONDITION_SIDEWAYS,
+            ])],
+            'captured_at' => ['nullable', 'date'],
             'raw_payload' => ['nullable', 'array'],
             'snapshot_at' => ['nullable', 'date'],
         ]);
 
-        $snapshot = MarketSnapshot::create([
+        $capturedAt = $this->dateOrNow($validated['captured_at'] ?? $validated['snapshot_at'] ?? null);
+        $payload = [
             'trade_signal_id' => $validated['trade_signal_id'] ?? null,
             'simulated_trade_id' => $validated['simulated_trade_id'] ?? null,
-            'symbol' => $validated['symbol'],
-            'snapshot_type' => $validated['snapshot_type'] ?? null,
-            'price' => $validated['price'] ?? null,
+            'symbol' => ! empty($validated['symbol']) ? $validated['symbol'] : 'MARKET',
+            'snapshot_type' => $validated['snapshot_type'],
+            'price' => $validated['price'] ?? $validated['btc_price'] ?? null,
             'volume_24h' => $validated['volume_24h'] ?? null,
             'price_change_24h_percent' => $validated['price_change_24h_percent'] ?? null,
             'funding_rate' => $validated['funding_rate'] ?? null,
             'open_interest' => $validated['open_interest'] ?? null,
+            'btc_price' => $validated['btc_price'] ?? null,
+            'btc_24h_change_percent' => $validated['btc_24h_change_percent'] ?? null,
+            'eth_price' => $validated['eth_price'] ?? null,
+            'eth_24h_change_percent' => $validated['eth_24h_change_percent'] ?? null,
+            'market_condition' => $validated['market_condition'] ?? null,
+            'captured_at' => $capturedAt,
             'raw_payload' => $validated['raw_payload'] ?? null,
-            'snapshot_at' => $this->dateOrNow($validated['snapshot_at'] ?? null),
-        ]);
+            'snapshot_at' => $capturedAt,
+        ];
+
+        if (! Schema::hasColumn('market_snapshots', 'price')) {
+            unset($payload['price']);
+        }
+
+        if (! Schema::hasColumn('market_snapshots', 'snapshot_at')) {
+            unset($payload['snapshot_at']);
+        }
+
+        $uniqueKeys = $this->marketSnapshotUniqueKeys($payload);
+        $snapshot = $uniqueKeys
+            ? MarketSnapshot::updateOrCreate($uniqueKeys, $payload)
+            : MarketSnapshot::create($payload);
 
         return response()->json([
             'success' => true,
             'message' => 'Market snapshot stored successfully.',
             'data' => $snapshot,
         ]);
+    }
+
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>|null
+     */
+    private function marketSnapshotUniqueKeys(array $payload): ?array
+    {
+        $snapshotType = $payload['snapshot_type'] ?? null;
+
+        if ($snapshotType === MarketSnapshot::SNAPSHOT_SIGNAL_SAVED && ! empty($payload['trade_signal_id'])) {
+            return [
+                'trade_signal_id' => $payload['trade_signal_id'],
+                'snapshot_type' => $snapshotType,
+            ];
+        }
+
+        if (in_array($snapshotType, [MarketSnapshot::SNAPSHOT_ENTRY_TRIGGERED, MarketSnapshot::SNAPSHOT_TRADE_CLOSED], true)) {
+            if (! empty($payload['simulated_trade_id'])) {
+                return [
+                    'simulated_trade_id' => $payload['simulated_trade_id'],
+                    'snapshot_type' => $snapshotType,
+                ];
+            }
+
+            if (! empty($payload['trade_signal_id'])) {
+                return [
+                    'trade_signal_id' => $payload['trade_signal_id'],
+                    'snapshot_type' => $snapshotType,
+                ];
+            }
+        }
+
+        return null;
     }
 
     private function tradesByStatus(Request $request, string $status, bool $onlyUnexpiredTracking = false): JsonResponse
