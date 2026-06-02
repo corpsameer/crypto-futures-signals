@@ -1,6 +1,7 @@
 """Runnable skeleton for the Phase 1 price monitor."""
 
 import argparse
+import logging
 import time
 from datetime import datetime, timezone
 
@@ -15,6 +16,9 @@ from constants import (
     require_config,
 )
 from laravel_api_client import LaravelApiClient
+from trade_logic import normalize_symbol, should_trigger_entry
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> int:
@@ -27,11 +31,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+
     if not args.skip_config_check:
         try:
             require_config()
         except RuntimeError as exc:
-            print(f"Configuration error: {exc}")
+            logger.error("Configuration error: %s", exc)
             return 1
 
     laravel_client = LaravelApiClient(LARAVEL_BASE_URL, PYTHON_API_TOKEN)
@@ -45,60 +51,148 @@ def main() -> int:
 
     while True:
         try:
-            print(f"[{timestamp()}] Running monitor check...")
+            logger.info("Running monitor check...")
             run_check(laravel_client, coindcx_client)
         except Exception as exc:
-            print(f"[{timestamp()}] Monitor check failed: {exc}")
+            logger.exception("Monitor check failed: %s", exc)
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
 def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
-    pending_signals = fetch_with_error("pending signals", laravel_client.get_pending_signals)
-    active_trades = fetch_with_error("active trades", laravel_client.get_active_trades)
-    post_sl_trades = fetch_with_error("post-SL tracking trades", laravel_client.get_post_sl_tracking_trades)
-    price_map = fetch_with_error("CoinDCX price map", coindcx_client.get_price_map)
+    pending_signals = extract_items(fetch_with_error("pending signals", laravel_client.get_pending_signals))
+    logger.info("Pending signals count: %d", len(pending_signals))
 
-    print(f"[{timestamp()}] Pending signals count: {count_items(pending_signals)}")
-    print(f"[{timestamp()}] Active trades count: {count_items(active_trades)}")
-    print(f"[{timestamp()}] Post-SL trades count: {count_items(post_sl_trades)}")
-    print(f"[{timestamp()}] Price map count: {count_items(price_map)}")
+    symbols = collect_symbols(pending_signals)
+    if not symbols:
+        logger.info("No pending signal symbols to price-check.")
+        return
+
+    prices = fetch_with_error("CoinDCX prices", lambda: coindcx_client.get_prices_for_symbols(symbols))
+    if not isinstance(prices, dict):
+        logger.warning("CoinDCX prices response was not a dictionary; skipping entry trigger checks.")
+        return
+
+    for signal in pending_signals:
+        process_pending_signal(signal, prices, laravel_client)
+
+
+def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient) -> None:
+    signal_id = signal.get("id")
+    symbol = normalize_symbol(signal.get("symbol") or signal.get("pair"))
+
+    try:
+        if not signal_id:
+            logger.warning("Skipping pending signal without id: %s", signal)
+            return
+
+        if not symbol:
+            logger.warning("Skipping pending signal %s without symbol.", signal_id)
+            return
+
+        price_data = prices.get(symbol)
+        if not price_data or not price_data.get("found"):
+            logger.warning("Price missing for pending signal %s symbol %s.", signal_id, symbol)
+            return
+
+        current_price = price_data.get("price")
+        logger.info("Price found for pending signal %s symbol %s: %s", signal_id, symbol, current_price)
+
+        trigger_result = should_trigger_entry(signal, current_price)
+        if not trigger_result.get("triggered"):
+            logger.info(
+                "Waiting for entry on signal %s %s: %s",
+                signal_id,
+                symbol,
+                trigger_result.get("reason"),
+            )
+            return
+
+        logger.info(
+            "Entry triggered for signal %s %s at fill price %s (current price %s).",
+            signal_id,
+            symbol,
+            trigger_result.get("fill_price"),
+            current_price,
+        )
+
+        payload = {
+            "trade_signal_id": signal_id,
+            "entry_price": trigger_result["fill_price"],
+            "current_price": current_price,
+            "event_timestamp": timestamp(),
+            "actual_price_move_percent": trigger_result["actual_price_move_percent"],
+            "leveraged_pnl_percent": trigger_result["leveraged_pnl_percent"],
+        }
+        response = laravel_client.entry_triggered(payload)
+        logger.info("Laravel entry-triggered API succeeded for signal %s: %s", signal_id, summarize_response(response))
+    except Exception as exc:
+        logger.exception("Failed to process pending signal %s (%s): %s", signal_id, symbol or "unknown symbol", exc)
+
+
+def collect_symbols(signals: list[dict]) -> list[str]:
+    symbols = []
+    seen = set()
+
+    for signal in signals:
+        if not isinstance(signal, dict):
+            continue
+
+        symbol = normalize_symbol(signal.get("symbol") or signal.get("pair"))
+        if not symbol or symbol in seen:
+            continue
+
+        symbols.append(symbol)
+        seen.add(symbol)
+
+    return symbols
+
+
+def extract_items(value) -> list:
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return value
+
+    if isinstance(value, dict):
+        for key in ("data", "items", "results"):
+            if isinstance(value.get(key), list):
+                return value[key]
+
+    return []
 
 
 def fetch_with_error(label: str, callback):
     try:
         return callback()
     except Exception as exc:
-        print(f"[{timestamp()}] Could not fetch {label}: {exc}")
+        logger.error("Could not fetch %s: %s", label, exc)
         return []
 
 
-def count_items(value) -> int:
-    if value is None:
-        return 0
+def summarize_response(response) -> str:
+    if not isinstance(response, dict):
+        return str(response)
 
-    if isinstance(value, list):
-        return len(value)
+    if "message" in response:
+        return str(response["message"])
 
-    if isinstance(value, dict):
-        for key in ("data", "items", "results"):
-            if isinstance(value.get(key), list):
-                return len(value[key])
+    if "success" in response:
+        return f"success={response['success']}"
 
-        return len(value)
-
-    return 0
+    return "response received"
 
 
 def print_config_summary(skip_config_check: bool) -> None:
-    print("Crypto Futures Signal Analyzer Python monitor")
-    print(f"Laravel base URL: {LARAVEL_BASE_URL}")
-    print(f"CoinDCX market URL: {COINDCX_MARKET_URL}")
-    print(f"Poll interval seconds: {POLL_INTERVAL_SECONDS}")
-    print(f"Entry valid hours: {ENTRY_VALID_HOURS}")
-    print(f"Post-SL tracking days: {POST_SL_TRACKING_DAYS}")
-    print(f"API token configured: {'yes' if bool(PYTHON_API_TOKEN) else 'no'}")
-    print(f"Config validation skipped: {'yes' if skip_config_check else 'no'}")
+    logger.info("Crypto Futures Signal Analyzer Python monitor")
+    logger.info("Laravel base URL: %s", LARAVEL_BASE_URL)
+    logger.info("CoinDCX market URL: %s", COINDCX_MARKET_URL)
+    logger.info("Poll interval seconds: %s", POLL_INTERVAL_SECONDS)
+    logger.info("Entry valid hours: %s", ENTRY_VALID_HOURS)
+    logger.info("Post-SL tracking days: %s", POST_SL_TRACKING_DAYS)
+    logger.info("API token configured: %s", "yes" if bool(PYTHON_API_TOKEN) else "no")
+    logger.info("Config validation skipped: %s", "yes" if skip_config_check else "no")
 
 
 def timestamp() -> str:
