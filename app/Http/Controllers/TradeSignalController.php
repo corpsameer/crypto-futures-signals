@@ -79,7 +79,8 @@ class TradeSignalController extends Controller
 
         $tradeSignal->load([
             'pastedSignal',
-            'simulatedTrades',
+            'simulatedTrades.trackingEvents',
+            'simulatedTrades.marketSnapshots',
             'trackingEvents',
             'marketSnapshots',
         ]);

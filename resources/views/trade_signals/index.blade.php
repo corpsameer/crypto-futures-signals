@@ -140,7 +140,7 @@
                                     </td>
                                     <td>
                                         <div class="d-flex flex-column gap-2">
-                                            <a href="{{ route('cryptofuturesignals.trade-signals.show', $tradeSignal) }}" class="btn btn-sm btn-outline-primary">View</a>
+                                            <a href="{{ route('cryptofuturesignals.trade-signals.show', $tradeSignal) }}" class="btn btn-sm btn-outline-primary">View Detail</a>
                                             @if ($tradeSignal->pastedSignal)
                                                 <a href="{{ route('cryptofuturesignals.signals.preview', $tradeSignal->pastedSignal) }}" class="btn btn-sm btn-outline-secondary">Edit Parsed Signal</a>
                                             @endif
