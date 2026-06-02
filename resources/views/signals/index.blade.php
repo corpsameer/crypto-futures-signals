@@ -70,7 +70,12 @@
                                     <td>{{ $signal->source }}</td>
                                     <td class="text-break" style="white-space: pre-line; max-width: 32rem;">{{ \Illuminate\Support\Str::limit($signal->raw_text, 120) }}</td>
                                     <td>
-                                        <a href="{{ route('cryptofuturesignals.signals.preview', $signal) }}" class="btn btn-sm btn-outline-primary">Review/Edit</a>
+                                        <div class="d-flex flex-column gap-2">
+                                            <a href="{{ route('cryptofuturesignals.signals.preview', $signal) }}" class="btn btn-sm btn-outline-primary">Review/Edit</a>
+                                            @if ($signal->tradeSignals->isNotEmpty())
+                                                <a href="{{ route('cryptofuturesignals.trade-signals.show', $signal->tradeSignals->first()) }}" class="btn btn-sm btn-outline-success">View Structured Signal</a>
+                                            @endif
+                                        </div>
                                     </td>
                                 </tr>
                             @endforeach

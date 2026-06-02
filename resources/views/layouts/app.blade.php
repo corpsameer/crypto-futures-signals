@@ -23,7 +23,8 @@
                 <ul class="navbar-nav ms-auto mb-2 mb-lg-0 align-items-lg-center">
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.dashboard') }}">Dashboard</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.signals.create') }}">Paste Signal</a></li>
-                    <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.signals.index') }}">Signals</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.signals.index') }}">Pasted Signals</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.trade-signals.index') }}">Structured Signals</a></li>
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/trades">Simulated Trades</a></li>
                     <li class="nav-item"><a class="nav-link" href="/cryptofuturesignals/trader-performance">Trader Performance</a></li>
                     @auth
