@@ -76,7 +76,8 @@ def should_trigger_entry(signal: dict, current_price: float) -> dict:
         "reason": "",
         "direction": direction,
         "planned_entry_price": None,
-        "fill_price": None,
+        "entry_trigger_price": None,
+        "fill_price": None,  # Backward-compatible alias for entry_trigger_price in simulation.
         "actual_price_move_percent": 0.0,
         "leveraged_pnl_percent": 0.0,
         "simulated_order_type": "limit",
@@ -108,24 +109,25 @@ def should_trigger_entry(signal: dict, current_price: float) -> dict:
             result["reason"] = "waiting_for_limit_pullback: current price is above the LONG upper entry price."
             return result
 
-        fill_price = min(price, upper_entry)
+        entry_trigger_price = price
         result["triggered"] = True
-        result["reason"] = "entry_triggered: current price is at or below the LONG upper entry price."
+        result["reason"] = "entry_triggered: current observed price is at or below the LONG upper entry price."
     else:
         if price < lower_entry:
             result["reason"] = "waiting_for_limit_retest: current price is below the SHORT lower entry price."
             return result
 
-        fill_price = max(price, lower_entry)
+        entry_trigger_price = price
         result["triggered"] = True
-        result["reason"] = "entry_triggered: current price is at or above the SHORT lower entry price."
+        result["reason"] = "entry_triggered: current observed price is at or above the SHORT lower entry price."
 
-    actual_move_percent = calculate_entry_slippage_percent(direction, planned_entry_price, fill_price)
+    actual_move_percent = calculate_entry_slippage_percent(direction, planned_entry_price, entry_trigger_price)
     leveraged_pnl_percent = calculate_leveraged_pnl_percent(actual_move_percent, leverage)
 
     result.update(
         {
-            "fill_price": fill_price,
+            "entry_trigger_price": entry_trigger_price,
+            "fill_price": entry_trigger_price,
             "actual_price_move_percent": actual_move_percent,
             "leveraged_pnl_percent": leveraged_pnl_percent,
         }
@@ -134,10 +136,10 @@ def should_trigger_entry(signal: dict, current_price: float) -> dict:
     return result
 
 
-def calculate_entry_slippage_percent(direction: str, planned_entry_price: float, fill_price: float) -> float:
-    """Calculate the percent move between planned entry and simulated fill price."""
+def calculate_entry_slippage_percent(direction: str, planned_entry_price: float, entry_trigger_price: float) -> float:
+    """Calculate simulated slippage between planned entry and observed trigger price."""
     planned = _safe_float(planned_entry_price)
-    fill = _safe_float(fill_price)
+    fill = _safe_float(entry_trigger_price)
     normalized_direction = _normalize_direction(direction)
 
     if planned is None or fill is None:
@@ -219,7 +221,7 @@ def calculate_leveraged_pnl_percent(actual_move_percent: float, leverage: float)
 
 
 def calculate_trade_metrics(trade: dict, current_price: float) -> dict:
-    """Calculate current price, actual move, and leveraged P&L for a trade."""
+    """Calculate metrics from simulated_trades.entry_price, the observed entry trigger price."""
     price = safe_float(current_price)
     entry_price = get_trade_entry_price(trade)
     direction = get_trade_direction(trade)
@@ -540,7 +542,12 @@ def get_trade_leverage(trade: dict) -> float:
 
 
 def get_trade_entry_price(trade: dict) -> float | None:
-    return safe_float(get_trade_signal_value(trade, "entry_price"))
+    if not isinstance(trade, dict):
+        return None
+
+    # For simulations, the top-level simulated_trades.entry_price is the observed
+    # CoinDCX entry trigger price. Do not fall back to the signal's planned entry.
+    return safe_float(trade.get("entry_price"))
 
 
 def safe_float(value, default=None):
@@ -653,6 +660,24 @@ def _run_entry_trigger_tests() -> int:
         print(f"{status}: {name} expected={expected} actual={actual} reason={result['reason']}")
         if actual is not expected:
             failures.append(name)
+            continue
+
+        if expected:
+            planned_entry_price = get_planned_entry_price(signal)
+            expected_move = calculate_entry_slippage_percent(signal["direction"], planned_entry_price, current_price)
+            expected_pnl = calculate_leveraged_pnl_percent(expected_move, signal.get("leverage", 1))
+            if (
+                result["planned_entry_price"] != planned_entry_price
+                or result["entry_trigger_price"] != current_price
+                or result["fill_price"] != current_price
+                or round(result["actual_price_move_percent"], 8) != round(expected_move, 8)
+                or round(result["leveraged_pnl_percent"], 8) != round(expected_pnl, 8)
+            ):
+                print(
+                    "FAIL: %s expected planned=%s trigger=%s move=%s pnl=%s actual=%s"
+                    % (name, planned_entry_price, current_price, expected_move, expected_pnl, result)
+                )
+                failures.append(f"{name} entry trigger price/P&L")
 
     failures.extend(_run_tp_sl_tests())
     failures.extend(_run_gain_milestone_tests())

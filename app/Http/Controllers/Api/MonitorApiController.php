@@ -180,8 +180,10 @@ class MonitorApiController extends Controller
             $eventTimestamp = $this->dateOrNow($validated['event_timestamp'] ?? null);
             $actualMove = $validated['actual_price_move_percent'] ?? 0;
             $leveragedPnl = $validated['leveraged_pnl_percent'] ?? 0;
-            $entryPrice = $validated['entry_price'];
-            $currentPrice = $validated['current_price'] ?? $entryPrice;
+            // Simulation only: request entry_price is the observed CoinDCX entry_trigger_price.
+            // It is stored in simulated_trades.entry_price and later P&L is calculated from it.
+            $observedEntryTriggerPrice = $validated['entry_price'];
+            $currentPrice = $validated['current_price'] ?? $observedEntryTriggerPrice;
 
             $simulatedTrade = SimulatedTrade::query()
                 ->where('trade_signal_id', $tradeSignal->id)
@@ -197,20 +199,22 @@ class MonitorApiController extends Controller
                     ->first();
             }
 
+            $storedEntryPrice = $simulatedTrade?->entry_price ?? $observedEntryTriggerPrice;
+
             $payload = [
                 'trade_signal_id' => $tradeSignal->id,
                 'user_id' => $tradeSignal->user_id,
                 'symbol' => $tradeSignal->symbol,
                 'direction' => $tradeSignal->direction,
                 'leverage' => $tradeSignal->leverage,
-                'entry_price' => $entryPrice,
+                'entry_price' => $storedEntryPrice,
                 'entry_triggered_at' => $eventTimestamp,
                 'stop_loss' => $tradeSignal->stop_loss,
                 'current_price' => $currentPrice,
-                'max_price_after_entry' => $entryPrice,
-                'min_price_after_entry' => $entryPrice,
-                'max_price' => $entryPrice,
-                'min_price' => $entryPrice,
+                'max_price_after_entry' => $storedEntryPrice,
+                'min_price_after_entry' => $storedEntryPrice,
+                'max_price' => $storedEntryPrice,
+                'min_price' => $storedEntryPrice,
                 'max_actual_price_move_percent' => $actualMove,
                 'max_leveraged_pnl_percent' => $leveragedPnl,
                 'min_actual_price_move_percent' => $actualMove,
@@ -225,10 +229,10 @@ class MonitorApiController extends Controller
 
             if ($simulatedTrade) {
                 $payload = array_merge($payload, [
-                    'max_price_after_entry' => $this->greaterValue($entryPrice, $simulatedTrade->max_price_after_entry ?? $simulatedTrade->max_price),
-                    'min_price_after_entry' => $this->lowerValue($entryPrice, $simulatedTrade->min_price_after_entry ?? $simulatedTrade->min_price),
-                    'max_price' => $this->greaterValue($entryPrice, $simulatedTrade->max_price),
-                    'min_price' => $this->lowerValue($entryPrice, $simulatedTrade->min_price),
+                    'max_price_after_entry' => $this->greaterValue($storedEntryPrice, $simulatedTrade->max_price_after_entry ?? $simulatedTrade->max_price),
+                    'min_price_after_entry' => $this->lowerValue($storedEntryPrice, $simulatedTrade->min_price_after_entry ?? $simulatedTrade->min_price),
+                    'max_price' => $this->greaterValue($storedEntryPrice, $simulatedTrade->max_price),
+                    'min_price' => $this->lowerValue($storedEntryPrice, $simulatedTrade->min_price),
                     'max_actual_price_move_percent' => $this->greaterValue($actualMove, $simulatedTrade->max_actual_price_move_percent),
                     'max_leveraged_pnl_percent' => $this->greaterValue($leveragedPnl, $simulatedTrade->max_leveraged_pnl_percent),
                     'min_actual_price_move_percent' => $this->lowerValue($actualMove, $simulatedTrade->min_actual_price_move_percent),
@@ -254,7 +258,7 @@ class MonitorApiController extends Controller
                 ],
                 [
                     'trade_signal_id' => $tradeSignal->id,
-                    'event_price' => $entryPrice,
+                    'event_price' => $storedEntryPrice,
                     'actual_price_move_percent' => $actualMove,
                     'leveraged_pnl_percent' => $leveragedPnl,
                     'event_timestamp' => $eventTimestamp,
