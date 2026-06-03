@@ -165,3 +165,29 @@ The MVP market condition uses BTC and ETH 24h change percentages:
 Signal-save snapshots may have null BTC/ETH price and 24h change values because Laravel does not fetch CoinDCX market data. Python captures real BTC/ETH public REST market context during entry and close snapshots when CoinDCX provides the ticker data.
 
 This remains market context tracking only. No live trading is performed, no authenticated CoinDCX APIs are used, no WebSocket is added, and no Telegram integration is performed.
+
+## System Logs
+
+Laravel uses the default file logger and writes Crypto Futures Signal Analyzer application logs to:
+
+- `storage/logs/laravel.log`
+
+Python monitor logs are written under `python/logs/`:
+
+- `python/logs/monitor.log` — monitor run starts, missing prices, API errors, and `[CFS Monitor Summary]` lines.
+- `python/logs/coindcx_prices.log` — every CoinDCX price fetch request, including the exact requested symbol list, returned price status, missing symbols, and overall call status.
+- `python/logs/errors.log` — shared Python error log for CoinDCX and Laravel API failures.
+
+CoinDCX price fetch logging intentionally records only requested symbols, returned prices/status, and missing-symbol details; it does not write huge raw ticker payloads in normal logs. API tokens and authorization header values are never logged. These logs are intended for local/VPS debugging only and are not a log viewer, alerting system, or external logging integration.
+
+## System Logs UI
+
+The Laravel app includes a simple authenticated browser log viewer at:
+
+- `/cryptofuturesignals/logs`
+
+The page requires login and reads from predefined file logs only. It does not create database log tables, store logs in the database, delete logs, or expose arbitrary file paths. The most important file for price-fetch visibility is:
+
+- `python/logs/coindcx_prices.log`
+
+Use this page to inspect recent CoinDCX requested pairs, returned prices, found/missing statuses, Python monitor summaries, Python error logs, and Laravel log entries from local/VPS file storage.

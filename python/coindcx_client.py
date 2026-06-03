@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import logging
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 import requests
 
 from constants import COINDCX_MARKET_URL
+from logger_config import get_error_logger, get_price_logger
 
 
 class CoinDCXClient:
@@ -18,8 +19,10 @@ class CoinDCXClient:
     def __init__(self, market_url: str, timeout: int = 15, logger=None):
         self.market_url = market_url
         self.timeout = timeout
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_price_logger()
+        self.error_logger = get_error_logger()
         self.session = requests.Session()
+        self.last_fetch_failed = False
 
     def normalize_symbol(self, symbol: str) -> str:
         """Return a normalized internal market symbol such as ``ICPUSDT``."""
@@ -27,38 +30,51 @@ class CoinDCXClient:
 
     def fetch_tickers(self) -> list:
         """Fetch ticker rows from CoinDCX, returning an empty list on failure."""
+        self.last_fetch_failed = False
+        self.logger.info('[CFS CoinDCX Tickers] fetch_tickers start url=%s', self.market_url)
+
         try:
             response = self.session.get(self.market_url, timeout=self.timeout)
             response.raise_for_status()
         except requests.RequestException as exc:
-            self.logger.error("CoinDCX ticker request failed for %s: %s", self.market_url, exc)
+            self.last_fetch_failed = True
+            self.logger.error('[CFS CoinDCX Tickers] fetch_tickers failure error="%s"', exc)
+            self.error_logger.error('[CFS CoinDCX Fetch Error] url=%s error="%s"', self.market_url, exc)
             return []
 
         try:
             payload = response.json()
         except ValueError as exc:
-            self.logger.error("CoinDCX ticker response was not valid JSON: %s", exc)
+            self.last_fetch_failed = True
+            self.logger.error('[CFS CoinDCX Tickers] fetch_tickers failure error="invalid_json: %s"', exc)
+            self.error_logger.error('[CFS CoinDCX Fetch Error] url=%s error="invalid_json: %s"', self.market_url, exc)
             return []
 
+        rows = None
         if isinstance(payload, list):
-            return payload
-
-        if isinstance(payload, dict):
+            rows = payload
+        elif isinstance(payload, dict):
             for key in ("data", "markets", "tickers"):
                 value = payload.get(key)
                 if isinstance(value, list):
-                    return value
+                    rows = value
+                    break
 
-            self.logger.error(
-                "CoinDCX ticker response had unexpected object format; expected a list or nested list under data, markets, or tickers."
-            )
+            if rows is None:
+                self.last_fetch_failed = True
+                message = "unexpected object format; expected a list or nested list under data, markets, or tickers"
+                self.logger.error('[CFS CoinDCX Tickers] fetch_tickers failure error="%s"', message)
+                self.error_logger.error('[CFS CoinDCX Fetch Error] url=%s error="%s"', self.market_url, message)
+                return []
+        else:
+            self.last_fetch_failed = True
+            message = f"unexpected format {type(payload).__name__}; expected list or dict"
+            self.logger.error('[CFS CoinDCX Tickers] fetch_tickers failure error="%s"', message)
+            self.error_logger.error('[CFS CoinDCX Fetch Error] url=%s error="%s"', self.market_url, message)
             return []
 
-        self.logger.error(
-            "CoinDCX ticker response had unexpected format %s; expected list or dict.",
-            type(payload).__name__,
-        )
-        return []
+        self.logger.info('[CFS CoinDCX Tickers] fetch_tickers success parsed_ticker_count=%d', len(rows))
+        return rows
 
     def extract_symbol(self, row: dict) -> str | None:
         """Extract and normalize a symbol from a ticker row."""
@@ -137,21 +153,43 @@ class CoinDCXClient:
                 "raw": row,
             }
 
-        self.logger.info("Parsed %d CoinDCX ticker prices.", len(price_map))
+        self.logger.info("[CFS CoinDCX Tickers] parsed_valid_price_count=%d", len(price_map))
         return price_map
 
     def get_prices_for_symbols(self, symbols: list[str]) -> dict:
         """Return found/missing price data for the requested symbols."""
         requested_symbols = [self.normalize_symbol(symbol) for symbol in symbols]
         requested_symbols = [symbol for symbol in requested_symbols if symbol]
-        price_map = self.get_price_map()
+        self.logger.info(
+            "[CFS CoinDCX Fetch] started symbols=%s",
+            json.dumps(requested_symbols, separators=(",", ":")),
+        )
+
+        try:
+            price_map = self.get_price_map()
+        except Exception as exc:
+            self.last_fetch_failed = True
+            self.logger.error(
+                "[CFS CoinDCX Fetch Result] status=failed error=%s requested_symbols=%s",
+                json.dumps(str(exc)),
+                json.dumps(requested_symbols, separators=(",", ":")),
+            )
+            self.error_logger.error(
+                "[CFS CoinDCX Fetch Error] requested_symbols=%s error=%s",
+                json.dumps(requested_symbols, separators=(",", ":")),
+                json.dumps(str(exc)),
+            )
+            return {}
+
         prices = {}
+        missing_symbols = []
 
         for symbol in requested_symbols:
             ticker = price_map.get(symbol)
 
             if ticker is None:
-                self.logger.warning("Requested CoinDCX symbol was not found: %s", symbol)
+                self.logger.warning("[CFS CoinDCX Missing Price] symbol=%s", symbol)
+                missing_symbols.append(symbol)
                 prices[symbol] = {
                     "found": False,
                     "price": None,
@@ -165,6 +203,18 @@ class CoinDCXClient:
                 "change_24h_percent": ticker.get("change_24h_percent"),
                 "raw": ticker["raw"],
             }
+
+        price_status = {symbol: prices[symbol]["price"] for symbol in requested_symbols}
+        status = "failed" if self.last_fetch_failed else "success"
+        self.logger.info(
+            "[CFS CoinDCX Fetch Result] status=%s requested=%d found=%d missing=%d prices=%s missing_symbols=%s",
+            status,
+            len(requested_symbols),
+            len(requested_symbols) - len(missing_symbols),
+            len(missing_symbols),
+            json.dumps(price_status, separators=(",", ":")),
+            json.dumps(missing_symbols, separators=(",", ":")),
+        )
 
         return prices
 
@@ -257,7 +307,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _run_cli() -> int:
     args = _parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    get_price_logger()
 
     requested_symbols = args.symbols or ["BTCUSDT", "ETHUSDT", "ICPUSDT"]
     client = CoinDCXClient(COINDCX_MARKET_URL)
