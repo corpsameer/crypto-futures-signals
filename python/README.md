@@ -191,3 +191,87 @@ The page requires login and reads from predefined file logs only. It does not cr
 - `python/logs/coindcx_prices.log`
 
 Use this page to inspect recent CoinDCX requested pairs, returned prices, found/missing statuses, Python monitor summaries, Python error logs, and Laravel log entries from local/VPS file storage.
+
+## Local End-to-End Testing
+
+Task 26 adds a safe local E2E test harness for validating important statuses and trade lifecycle events before a VPS/live deployment.
+
+### What it covers
+
+The local runner uses controlled fake prices so every important flow can be forced without waiting for real market movement:
+
+- Entry triggered and entry missed flows.
+- LONG and SHORT TP1/TP2/TP3/TP4 paths.
+- LONG and SHORT stop-loss paths.
+- 3%, 3.5%, 5%, and 7% leveraged gain milestone detection when reached by the fake price path.
+- Max gain and max loss metric updates.
+- Post-SL TP recovery tracking and `POST_SL_MAX_GAIN` behavior.
+- Post-SL tracking completion through the close API.
+- Market snapshot creation/update.
+- Duplicate/idempotent event behavior for repeated event submissions.
+
+### Steps
+
+1. Start Laravel locally:
+
+```bash
+php artisan serve
+```
+
+2. Prepare local E2E test data:
+
+```bash
+php artisan cfs:test-local-e2e
+```
+
+The Artisan command creates a `LocalE2E` test user if needed, creates structured `pasted_signals` and `trade_signals` rows directly, and prints the created signal IDs with the batch marker. Re-running it creates a new `LOCAL_E2E_TEST_BATCH_YYYYMMDDHHMMSS` batch unless you pass `--batch=...` to reuse a specific batch marker.
+
+3. Run the Python local E2E scenario runner:
+
+```bash
+python python/local_e2e_test.py
+```
+
+You can also target a specific batch:
+
+```bash
+python python/local_e2e_test.py --batch LOCAL_E2E_TEST_BATCH_YYYYMMDDHHMMSS
+```
+
+4. Review the local E2E log:
+
+```bash
+python/logs/local_e2e_test.log
+```
+
+5. Open the Laravel UI and inspect the test results:
+
+- `/cryptofuturesignals/trades`
+- `/cryptofuturesignals/dashboard`
+- `/cryptofuturesignals/traders`
+- `/cryptofuturesignals/market-analysis`
+- `/cryptofuturesignals/logs`
+
+### Safety notes
+
+- The local E2E runner uses fake prices defined in scenario arrays.
+- It does not call CoinDCX.
+- It does not place live trades or call authenticated exchange APIs.
+- It does not use Telegram APIs.
+- It calls the same Laravel monitor APIs as the real Python monitor, then validates state through python-token-protected local-test state endpoints.
+- It is intended for local simulation/tracking verification only.
+
+### Suggested validation commands
+
+After pulling the code and ensuring dependencies are already present, run:
+
+```bash
+composer dump-autoload
+php artisan optimize:clear
+php artisan route:list
+php artisan cfs:test-local-e2e
+php artisan serve
+python python/local_e2e_test.py
+```
+
+Expected result: all local E2E scenarios pass, UI pages show the test results, duplicate event submissions do not create duplicate rows, and every tested event includes `event_price`, `actual_price_move_percent`, `leveraged_pnl_percent`, and `event_timestamp`.

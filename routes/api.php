@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\LocalTestApiController;
 use App\Http\Controllers\Api\MonitorApiController;
 use Illuminate\Support\Facades\Route;
 
@@ -24,4 +25,7 @@ Route::prefix('cryptofuturesignals/api')
         Route::post('/simulated-trades/update-metrics', [MonitorApiController::class, 'updateMetrics'])->name('simulated-trades.update-metrics');
         Route::post('/simulated-trades/close', [MonitorApiController::class, 'closeTrade'])->name('simulated-trades.close');
         Route::post('/market-snapshots/store', [MonitorApiController::class, 'storeMarketSnapshot'])->name('market-snapshots.store');
+        Route::get('/local-test/signals', [LocalTestApiController::class, 'signals'])->name('local-test.signals');
+        Route::get('/local-test/trade/{simulatedTrade}/state', [LocalTestApiController::class, 'tradeState'])->name('local-test.trade-state');
+        Route::get('/local-test/signal/{tradeSignal}/state', [LocalTestApiController::class, 'signalState'])->name('local-test.signal-state');
     });
