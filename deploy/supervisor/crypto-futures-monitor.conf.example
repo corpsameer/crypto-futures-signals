@@ -1,0 +1,13 @@
+; Supervisor configuration example for the Crypto Futures Signal Analyzer Python monitor.
+; Copy this file to /etc/supervisor/conf.d/crypto-futures-monitor.conf on the server
+; after reviewing paths and permissions. Do not schedule the monitor with cron; Supervisor
+; should keep this long-running process alive.
+
+[program:crypto-futures-monitor]
+directory=/var/www/crypto-futures-signals
+command=/usr/bin/python3 /var/www/crypto-futures-signals/python/price_monitor.py
+autostart=true
+autorestart=true
+stdout_logfile=/var/www/crypto-futures-signals/python/logs/supervisor_stdout.log
+stderr_logfile=/var/www/crypto-futures-signals/python/logs/supervisor_stderr.log
+redirect_stderr=false
