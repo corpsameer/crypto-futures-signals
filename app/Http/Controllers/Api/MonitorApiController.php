@@ -11,8 +11,10 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Throwable;
 
 class MonitorApiController extends Controller
 {
@@ -64,8 +66,9 @@ class MonitorApiController extends Controller
             'current_price' => ['nullable', 'numeric'],
         ]);
 
-        $result = DB::transaction(function () use ($validated): array {
-            $tradeSignal = TradeSignal::query()->lockForUpdate()->findOrFail($validated['trade_signal_id']);
+        try {
+            $result = DB::transaction(function () use ($validated): array {
+                $tradeSignal = TradeSignal::query()->lockForUpdate()->findOrFail($validated['trade_signal_id']);
             $missedAt = $this->dateOrNow($validated['missed_at'] ?? null);
             $reason = $validated['reason'] ?? 'Entry not triggered within configured validity window';
             $currentPrice = $validated['current_price'] ?? null;
@@ -130,7 +133,14 @@ class MonitorApiController extends Controller
                 'simulated_trade' => $simulatedTrade?->fresh('tradeSignal'),
                 'event' => $event,
             ];
-        });
+            });
+        } catch (Throwable $exception) {
+            Log::error('[CFS API] Mark entry missed exception trade_signal_id='.($validated['trade_signal_id'] ?? 'unknown'), [
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
 
         return response()->json([
             'success' => true,
@@ -164,8 +174,9 @@ class MonitorApiController extends Controller
             'leveraged_pnl_percent' => ['nullable', 'numeric'],
         ]);
 
-        $result = DB::transaction(function () use ($validated): array {
-            $tradeSignal = TradeSignal::query()->lockForUpdate()->findOrFail($validated['trade_signal_id']);
+        try {
+            $result = DB::transaction(function () use ($validated): array {
+                $tradeSignal = TradeSignal::query()->lockForUpdate()->findOrFail($validated['trade_signal_id']);
             $eventTimestamp = $this->dateOrNow($validated['event_timestamp'] ?? null);
             $actualMove = $validated['actual_price_move_percent'] ?? 0;
             $leveragedPnl = $validated['leveraged_pnl_percent'] ?? 0;
@@ -251,7 +262,14 @@ class MonitorApiController extends Controller
             );
 
             return [$simulatedTrade->fresh('tradeSignal'), $event];
-        });
+            });
+        } catch (Throwable $exception) {
+            Log::error('[CFS API] Entry triggered exception trade_signal_id='.($validated['trade_signal_id'] ?? 'unknown'), [
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
 
         return response()->json([
             'success' => true,
@@ -276,8 +294,9 @@ class MonitorApiController extends Controller
             'notes' => ['nullable', 'string'],
         ]);
 
-        $result = DB::transaction(function () use ($validated): array {
-            $simulatedTrade = SimulatedTrade::query()->lockForUpdate()->findOrFail($validated['simulated_trade_id']);
+        try {
+            $result = DB::transaction(function () use ($validated): array {
+                $simulatedTrade = SimulatedTrade::query()->lockForUpdate()->findOrFail($validated['simulated_trade_id']);
             $eventType = $validated['event_type'];
             $eventTimestamp = Carbon::parse($validated['event_timestamp']);
 
@@ -296,7 +315,14 @@ class MonitorApiController extends Controller
             $this->applyEventStatus($simulatedTrade, $eventType, $validated['event_price'], $eventTimestamp);
 
             return [$simulatedTrade->fresh('tradeSignal'), $event, $message];
-        });
+            });
+        } catch (Throwable $exception) {
+            Log::error('[CFS API] Store event exception simulated_trade_id='.($validated['simulated_trade_id'] ?? 'unknown').' event_type='.($validated['event_type'] ?? 'unknown'), [
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
 
         return response()->json([
             'success' => true,
@@ -322,8 +348,9 @@ class MonitorApiController extends Controller
         $actualMove = $validated['actual_price_move_percent'];
         $leveragedPnl = $validated['leveraged_pnl_percent'];
 
-        $simulatedTrade = DB::transaction(function () use ($validated, $currentPrice, $actualMove, $leveragedPnl): SimulatedTrade {
-            $simulatedTrade = SimulatedTrade::query()->lockForUpdate()->findOrFail($validated['simulated_trade_id']);
+        try {
+            $simulatedTrade = DB::transaction(function () use ($validated, $currentPrice, $actualMove, $leveragedPnl): SimulatedTrade {
+                $simulatedTrade = SimulatedTrade::query()->lockForUpdate()->findOrFail($validated['simulated_trade_id']);
 
             $simulatedTrade->fill([
                 'current_price' => $currentPrice,
@@ -342,7 +369,14 @@ class MonitorApiController extends Controller
             ])->save();
 
             return $simulatedTrade;
-        });
+            });
+        } catch (Throwable $exception) {
+            Log::error('[CFS API] Update metrics exception simulated_trade_id='.($validated['simulated_trade_id'] ?? 'unknown'), [
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
 
         return response()->json([
             'success' => true,
@@ -369,8 +403,9 @@ class MonitorApiController extends Controller
             'notes' => ['nullable', 'string'],
         ]);
 
-        $result = DB::transaction(function () use ($validated): array {
-            $simulatedTrade = SimulatedTrade::query()->lockForUpdate()->findOrFail($validated['simulated_trade_id']);
+        try {
+            $result = DB::transaction(function () use ($validated): array {
+                $simulatedTrade = SimulatedTrade::query()->lockForUpdate()->findOrFail($validated['simulated_trade_id']);
             $closedAt = $this->dateOrNow($validated['closed_at'] ?? null);
 
             $simulatedTrade->update([
@@ -398,7 +433,14 @@ class MonitorApiController extends Controller
             );
 
             return [$simulatedTrade->fresh('tradeSignal'), $event];
-        });
+            });
+        } catch (Throwable $exception) {
+            Log::error('[CFS API] Close trade exception simulated_trade_id='.($validated['simulated_trade_id'] ?? 'unknown'), [
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
 
         return response()->json([
             'success' => true,
@@ -465,10 +507,20 @@ class MonitorApiController extends Controller
             unset($payload['snapshot_at']);
         }
 
-        $uniqueKeys = $this->marketSnapshotUniqueKeys($payload);
-        $snapshot = $uniqueKeys
-            ? MarketSnapshot::updateOrCreate($uniqueKeys, $payload)
-            : MarketSnapshot::create($payload);
+        try {
+            $uniqueKeys = $this->marketSnapshotUniqueKeys($payload);
+            $snapshot = $uniqueKeys
+                ? MarketSnapshot::updateOrCreate($uniqueKeys, $payload)
+                : MarketSnapshot::create($payload);
+        } catch (Throwable $exception) {
+            Log::error('[CFS Snapshot] Market snapshot exception snapshot_type='.($payload['snapshot_type'] ?? 'unknown'), [
+                'trade_signal_id' => $payload['trade_signal_id'] ?? null,
+                'simulated_trade_id' => $payload['simulated_trade_id'] ?? null,
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
 
         return response()->json([
             'success' => true,
@@ -565,18 +617,36 @@ class MonitorApiController extends Controller
      */
     private function storeIdempotentTradeEvent(SimulatedTrade $simulatedTrade, string $eventType, array $eventPayload): array
     {
+        $existingAnyEvent = TradeTrackingEvent::query()
+            ->where('simulated_trade_id', $simulatedTrade->id)
+            ->where('event_type', $eventType)
+            ->lockForUpdate()
+            ->first();
+
+        if ($existingAnyEvent) {
+            Log::info('[CFS Event] Duplicate/idempotent event attempt simulated_trade_id='.$simulatedTrade->id.' event_type='.$eventType.' action=update_existing');
+        } else {
+            Log::info('[CFS Event] New event simulated_trade_id='.$simulatedTrade->id.' event_type='.$eventType.' action=create');
+        }
+
         if ($eventType === TradeTrackingEvent::EVENT_POST_SL_MAX_GAIN) {
-            $existingEvent = TradeTrackingEvent::query()
+            $existingEvent = $existingAnyEvent;
+
+            if (! $existingEvent) {
+                $existingEvent = TradeTrackingEvent::query()
                 ->where('simulated_trade_id', $simulatedTrade->id)
                 ->where('event_type', TradeTrackingEvent::EVENT_POST_SL_MAX_GAIN)
                 ->lockForUpdate()
                 ->first();
+            }
 
             if ($existingEvent) {
                 $existingPnl = $existingEvent->leveraged_pnl_percent;
                 $incomingPnl = $eventPayload['leveraged_pnl_percent'];
 
                 if ($existingPnl !== null && (float) $incomingPnl <= (float) $existingPnl) {
+                    Log::info('[CFS Event] POST_SL_MAX_GAIN unchanged simulated_trade_id='.$simulatedTrade->id.' existing_pnl='.$existingPnl.' incoming_pnl='.$incomingPnl);
+
                     return [$existingEvent, 'Post-SL max gain unchanged.'];
                 }
 

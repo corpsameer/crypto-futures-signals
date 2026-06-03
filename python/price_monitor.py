@@ -1,7 +1,6 @@
 """Runnable skeleton for the Phase 1 price monitor."""
 
 import argparse
-import logging
 import time
 from datetime import datetime, timezone
 
@@ -16,6 +15,7 @@ from constants import (
     require_config,
 )
 from laravel_api_client import LaravelApiClient
+from logger_config import get_error_logger, get_monitor_logger
 from trade_logic import (
     calculate_trade_metrics,
     detect_gain_milestone_events,
@@ -32,7 +32,8 @@ from trade_logic import (
     should_trigger_entry,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_monitor_logger()
+error_logger = get_error_logger()
 
 
 def main() -> int:
@@ -44,8 +45,6 @@ def main() -> int:
         help="Skip validation of placeholder local configuration for dry testing.",
     )
     args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
     if not args.skip_config_check:
         try:
@@ -60,55 +59,100 @@ def main() -> int:
     print_config_summary(args.skip_config_check)
 
     if args.once:
-        run_check(laravel_client, coindcx_client)
+        run_check(laravel_client, coindcx_client, mode="once")
         return 0
 
     while True:
         try:
             logger.info("Running monitor check...")
-            run_check(laravel_client, coindcx_client)
+            run_check(laravel_client, coindcx_client, mode="loop")
         except Exception as exc:
             logger.exception("Monitor check failed: %s", exc)
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
-def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
-    pending_signals = extract_items(fetch_with_error("pending signals", laravel_client.get_pending_signals))
-    logger.info("Pending signals count: %d", len(pending_signals))
+def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, mode: str = "once") -> None:
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    started_at = timestamp()
+    stats = new_run_stats()
+    logger.info(
+        "[CFS Monitor Run] run_id=%s started_at=%s mode=%s laravel_base_url=%s coindcx_market_url=%s poll_interval=%s entry_valid_hours=%s post_sl_tracking_days=%s",
+        run_id,
+        started_at,
+        mode,
+        LARAVEL_BASE_URL,
+        COINDCX_MARKET_URL,
+        POLL_INTERVAL_SECONDS,
+        ENTRY_VALID_HOURS,
+        POST_SL_TRACKING_DAYS,
+    )
 
-    pending_symbols = collect_symbols(pending_signals)
-    if pending_symbols:
-        pending_prices = fetch_prices(coindcx_client, pending_symbols, "entry trigger checks")
-        for signal in pending_signals:
-            process_pending_signal(signal, pending_prices, laravel_client, coindcx_client)
-    else:
-        logger.info("No pending signal symbols to price-check.")
+    try:
+        pending_signals = extract_items(fetch_with_error("pending signals", laravel_client.get_pending_signals, stats))
+        stats["pending_signals_count"] = len(pending_signals)
+        logger.info("Pending signals count: %d", len(pending_signals))
 
-    active_trades = extract_items(fetch_with_error("active simulated trades", laravel_client.get_active_trades))
-    logger.info("Active trades count: %d", len(active_trades))
+        pending_symbols = collect_symbols(pending_signals)
+        if pending_symbols:
+            pending_prices = fetch_prices(coindcx_client, pending_symbols, "entry trigger checks", stats)
+            stats["pending_prices_found_count"] = count_found_prices(pending_prices, pending_symbols)
+            stats["pending_prices_missing_count"] = len(pending_symbols) - stats["pending_prices_found_count"]
+            for signal in pending_signals:
+                process_pending_signal(signal, pending_prices, laravel_client, coindcx_client, stats)
+        else:
+            logger.info("No pending signal symbols to price-check.")
 
-    active_symbols = collect_trade_symbols(active_trades)
-    if active_symbols:
-        active_prices = fetch_prices(coindcx_client, active_symbols, "active trade TP/SL tracking")
-        for trade in active_trades:
-            process_active_trade(trade, active_prices, laravel_client, coindcx_client)
-    else:
-        logger.info("No active trade symbols to price-check.")
+        active_trades = extract_items(fetch_with_error("active simulated trades", laravel_client.get_active_trades, stats))
+        stats["active_trades_count"] = len(active_trades)
+        logger.info("Active trades count: %d", len(active_trades))
 
-    post_sl_trades = extract_items(fetch_with_error("post-SL tracking trades", laravel_client.get_post_sl_tracking_trades))
-    logger.info("Post-SL tracking trades count: %d", len(post_sl_trades))
+        active_symbols = collect_trade_symbols(active_trades)
+        if active_symbols:
+            active_prices = fetch_prices(coindcx_client, active_symbols, "active trade TP/SL tracking", stats)
+            stats["active_prices_found_count"] = count_found_prices(active_prices, active_symbols)
+            stats["active_prices_missing_count"] = len(active_symbols) - stats["active_prices_found_count"]
+            for trade in active_trades:
+                process_active_trade(trade, active_prices, laravel_client, coindcx_client, stats)
+        else:
+            logger.info("No active trade symbols to price-check.")
 
-    post_sl_symbols = collect_trade_symbols(post_sl_trades)
-    if post_sl_symbols:
-        post_sl_prices = fetch_prices(coindcx_client, post_sl_symbols, "post-SL tracking")
-        for trade in post_sl_trades:
-            process_post_sl_trade(trade, post_sl_prices, laravel_client, coindcx_client)
-    else:
-        logger.info("No post-SL tracking trade symbols to price-check.")
+        post_sl_trades = extract_items(fetch_with_error("post-SL tracking trades", laravel_client.get_post_sl_tracking_trades, stats))
+        stats["post_sl_trades_count"] = len(post_sl_trades)
+        logger.info("Post-SL tracking trades count: %d", len(post_sl_trades))
+
+        post_sl_symbols = collect_trade_symbols(post_sl_trades)
+        if post_sl_symbols:
+            post_sl_prices = fetch_prices(coindcx_client, post_sl_symbols, "post-SL tracking", stats)
+            for trade in post_sl_trades:
+                process_post_sl_trade(trade, post_sl_prices, laravel_client, coindcx_client, stats)
+        else:
+            logger.info("No post-SL tracking trade symbols to price-check.")
+    except Exception as exc:
+        logger.exception("[CFS Monitor Error] run_id=%s error=%s", run_id, exc)
+        error_logger.exception("[CFS Monitor Error] run_id=%s error=%s", run_id, exc)
+    finally:
+        completed_at = timestamp()
+        logger.info(
+            "[CFS Monitor Summary] run_id=%s pending=%d active=%d post_sl=%d entries_triggered=%d events_sent=%d metrics_updated=%d missing_prices=%d api_errors=%d coindcx_errors=%d tp_sl_events=%d gain_events=%d post_sl_events=%d completed_at=%s",
+            run_id,
+            stats["pending_signals_count"],
+            stats["active_trades_count"],
+            stats["post_sl_trades_count"],
+            stats["entries_triggered_count"],
+            stats["events_sent_count"],
+            stats["metrics_updated_count"],
+            stats["missing_symbol_count"],
+            stats["api_errors_count"],
+            stats["coindcx_errors_count"],
+            stats["tp_sl_events_detected_count"],
+            stats["gain_events_detected_count"],
+            stats["post_sl_events_detected_count"],
+            completed_at,
+        )
 
 
-def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
+def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, stats: dict) -> None:
     signal_id = signal.get("id")
     symbol = normalize_symbol(signal.get("symbol") or signal.get("pair"))
 
@@ -128,13 +172,18 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
                 "reason": expiry_reason,
                 "current_price": current_price,
             }
-            response = laravel_client.mark_entry_missed(payload)
-            logger.info(
-                "Signal %s marked entry_missed: %s (%s)",
-                signal_id,
-                expiry_reason,
-                summarize_response(response),
-            )
+            try:
+                response = laravel_client.mark_entry_missed(payload)
+                logger.info(
+                    "Signal %s marked entry_missed: %s (%s)",
+                    signal_id,
+                    expiry_reason,
+                    summarize_response(response),
+                )
+            except Exception as exc:
+                stats["api_errors_count"] += 1
+                logger.error("[CFS Monitor API Error] context=mark_entry_missed signal_id=%s error=%s", signal_id, exc)
+                error_logger.error("[CFS Monitor API Error] context=mark_entry_missed signal_id=%s error=%s", signal_id, exc)
             return
 
         if not symbol:
@@ -142,7 +191,8 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
             return
 
         if not price_data or not price_data.get("found"):
-            logger.warning("Price missing for pending signal %s symbol %s.", signal_id, symbol)
+            stats["missing_symbol_count"] += 1
+            logger.warning("[CFS Monitor Missing Price] context=pending signal_id=%s symbol=%s", signal_id, symbol)
             return
 
         if current_price is None:
@@ -177,8 +227,15 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
             "actual_price_move_percent": trigger_result["actual_price_move_percent"],
             "leveraged_pnl_percent": trigger_result["leveraged_pnl_percent"],
         }
-        response = laravel_client.entry_triggered(payload)
-        logger.info("Laravel entry-triggered API succeeded for signal %s: %s", signal_id, summarize_response(response))
+        try:
+            response = laravel_client.entry_triggered(payload)
+            stats["entries_triggered_count"] += 1
+            logger.info("Laravel entry-triggered API succeeded for signal %s: %s", signal_id, summarize_response(response))
+        except Exception as exc:
+            stats["api_errors_count"] += 1
+            logger.error("[CFS Monitor API Error] context=entry_triggered signal_id=%s error=%s", signal_id, exc)
+            error_logger.error("[CFS Monitor API Error] context=entry_triggered signal_id=%s error=%s", signal_id, exc)
+            return
         simulated_trade_id = extract_simulated_trade_id(response)
         store_market_context_snapshot(
             laravel_client,
@@ -189,13 +246,14 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
                 "symbol": symbol,
                 "snapshot_type": "entry_triggered",
             },
+            stats,
         )
     except Exception as exc:
         logger.exception("Failed to process pending signal %s (%s): %s", signal_id, symbol or "unknown symbol", exc)
 
 
 
-def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
+def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, stats: dict) -> None:
     trade_id = (trade.get("id") or trade.get("simulated_trade_id")) if isinstance(trade, dict) else None
     symbol = get_trade_symbol(trade)
 
@@ -210,7 +268,8 @@ def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiCl
 
         price_data = prices.get(symbol) if isinstance(prices, dict) else None
         if not price_data or not price_data.get("found"):
-            logger.warning("Price missing for active trade %s %s.", trade_id, symbol)
+            stats["missing_symbol_count"] += 1
+            logger.warning("[CFS Monitor Missing Price] context=active trade_id=%s symbol=%s", trade_id, symbol)
             return
 
         current_price = safe_float(price_data.get("price"))
@@ -241,12 +300,17 @@ def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiCl
 
         try:
             response = laravel_client.update_metrics(metrics_payload)
+            stats["metrics_updated_count"] += 1
             logger.info("Metrics updated for trade %s: %s", trade_id, summarize_response(response))
         except Exception as exc:
-            logger.error("Metrics update failed for trade %s: %s", trade_id, exc)
+            stats["api_errors_count"] += 1
+            logger.error("[CFS Monitor API Error] context=update_metrics trade_id=%s error=%s", trade_id, exc)
+            error_logger.error("[CFS Monitor API Error] context=update_metrics trade_id=%s error=%s", trade_id, exc)
 
         tp_sl_events = detect_tp_sl_events(trade, current_price)
         gain_milestone_events = detect_gain_milestone_events(trade, current_price)
+        stats["tp_sl_events_detected_count"] += len(tp_sl_events)
+        stats["gain_events_detected_count"] += len(gain_milestone_events)
 
         for event in gain_milestone_events:
             logger.info(
@@ -258,13 +322,14 @@ def process_active_trade(trade: dict, prices: dict, laravel_client: LaravelApiCl
             )
 
         for event in tp_sl_events + gain_milestone_events:
-            store_trade_event(laravel_client, trade_id, event)
+            if store_trade_event(laravel_client, trade_id, event, stats):
+                stats["events_sent_count"] += 1
     except Exception as exc:
         logger.exception("Failed to process active trade %s (%s): %s", trade_id, symbol or "unknown symbol", exc)
 
 
 
-def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
+def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, stats: dict) -> None:
     trade_id = (trade.get("id") or trade.get("simulated_trade_id")) if isinstance(trade, dict) else None
     symbol = get_trade_symbol(trade)
 
@@ -279,7 +344,8 @@ def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiC
 
         price_data = prices.get(symbol) if isinstance(prices, dict) else None
         if not price_data or not price_data.get("found"):
-            logger.warning("Price missing for post-SL trade %s %s.", trade_id, symbol)
+            stats["missing_symbol_count"] += 1
+            logger.warning("[CFS Monitor Missing Price] context=post_sl trade_id=%s symbol=%s", trade_id, symbol)
             return
 
         current_price = safe_float(price_data.get("price"))
@@ -311,9 +377,12 @@ def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiC
 
         try:
             response = laravel_client.update_metrics(metrics_payload)
+            stats["metrics_updated_count"] += 1
             logger.info("Post-SL metrics updated for trade %s: %s", trade_id, summarize_response(response))
         except Exception as exc:
-            logger.error("Post-SL metrics update failed for trade %s: %s", trade_id, exc)
+            stats["api_errors_count"] += 1
+            logger.error("[CFS Monitor API Error] context=update_metrics trade_id=%s error=%s", trade_id, exc)
+            error_logger.error("[CFS Monitor API Error] context=update_metrics trade_id=%s error=%s", trade_id, exc)
 
         tracking_until = trade.get("tracking_until")
         if tracking_until and parse_post_sl_tracking_until(tracking_until) is None:
@@ -345,12 +414,17 @@ def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiC
                         "symbol": symbol,
                         "snapshot_type": "trade_closed",
                     },
+                    stats,
                 )
             except Exception as exc:
-                logger.error("Post-SL close failed for trade %s: %s", trade_id, exc)
+                stats["api_errors_count"] += 1
+                logger.error("[CFS Monitor API Error] context=close_trade trade_id=%s error=%s", trade_id, exc)
+                error_logger.error("[CFS Monitor API Error] context=close_trade trade_id=%s error=%s", trade_id, exc)
             return
 
-        for event in detect_post_sl_events(trade, current_price):
+        post_sl_events = detect_post_sl_events(trade, current_price)
+        stats["post_sl_events_detected_count"] += len(post_sl_events)
+        for event in post_sl_events:
             logger.info(
                 "Detected post-SL event %s for trade %s at price %s, leveraged pnl %.2f%%",
                 event["event_type"],
@@ -358,11 +432,12 @@ def process_post_sl_trade(trade: dict, prices: dict, laravel_client: LaravelApiC
                 event["event_price"],
                 event["leveraged_pnl_percent"],
             )
-            store_trade_event(laravel_client, trade_id, event)
+            if store_trade_event(laravel_client, trade_id, event, stats):
+                stats["events_sent_count"] += 1
     except Exception as exc:
         logger.exception("Failed to process post-SL trade %s (%s): %s", trade_id, symbol or "unknown symbol", exc)
 
-def store_trade_event(laravel_client: LaravelApiClient, trade_id, event: dict) -> None:
+def store_trade_event(laravel_client: LaravelApiClient, trade_id, event: dict, stats: dict) -> bool:
     event_type = event["event_type"]
     event_payload = {
         "simulated_trade_id": trade_id,
@@ -383,8 +458,12 @@ def store_trade_event(laravel_client: LaravelApiClient, trade_id, event: dict) -
             event_type,
             summarize_response(response),
         )
+        return True
     except Exception as exc:
-        logger.error("Laravel event store failed for trade %s %s: %s", trade_id, event_type, exc)
+        stats["api_errors_count"] += 1
+        logger.error("[CFS Monitor API Error] context=store_event trade_id=%s event_type=%s error=%s", trade_id, event_type, exc)
+        error_logger.error("[CFS Monitor API Error] context=store_event trade_id=%s event_type=%s error=%s", trade_id, event_type, exc)
+        return False
 
 
 
@@ -392,7 +471,8 @@ def store_market_context_snapshot(
     laravel_client: LaravelApiClient,
     coindcx_client: CoinDCXClient,
     base_payload: dict,
-) -> None:
+    stats: dict,
+) -> bool:
     snapshot_type = base_payload.get("snapshot_type")
     try:
         market_context = coindcx_client.get_market_context()
@@ -412,8 +492,12 @@ def store_market_context_snapshot(
             snapshot_type,
             summarize_response(response),
         )
+        return True
     except Exception as exc:
-        logger.error("Market snapshot store failed for %s: %s", snapshot_type, exc)
+        stats["api_errors_count"] += 1
+        logger.error("[CFS Monitor API Error] context=market_snapshot trade_id=%s snapshot_type=%s error=%s", base_payload.get("simulated_trade_id"), snapshot_type, exc)
+        error_logger.error("[CFS Monitor API Error] context=market_snapshot trade_id=%s snapshot_type=%s error=%s", base_payload.get("simulated_trade_id"), snapshot_type, exc)
+        return False
 
 
 def extract_simulated_trade_id(response) -> int | None:
@@ -463,8 +547,12 @@ def collect_trade_symbols(trades: list[dict]) -> list[str]:
     return symbols
 
 
-def fetch_prices(coindcx_client: CoinDCXClient, symbols: list[str], purpose: str) -> dict:
-    prices = fetch_with_error("CoinDCX prices", lambda: coindcx_client.get_prices_for_symbols(symbols))
+def fetch_prices(coindcx_client: CoinDCXClient, symbols: list[str], purpose: str, stats: dict) -> dict:
+    before_failed = getattr(coindcx_client, "last_fetch_failed", False)
+    prices = fetch_with_error("CoinDCX prices", lambda: coindcx_client.get_prices_for_symbols(symbols), stats, is_api=False)
+    if getattr(coindcx_client, "last_fetch_failed", False) and not before_failed:
+        stats["coindcx_errors_count"] += 1
+
     if not isinstance(prices, dict):
         logger.warning("CoinDCX prices response was not a dictionary; skipping %s.", purpose)
         return {}
@@ -487,12 +575,46 @@ def extract_items(value) -> list:
     return []
 
 
-def fetch_with_error(label: str, callback):
+def fetch_with_error(label: str, callback, stats: dict | None = None, is_api: bool = True):
     try:
         return callback()
     except Exception as exc:
+        if stats is not None:
+            if is_api:
+                stats["api_errors_count"] += 1
+            else:
+                stats["coindcx_errors_count"] += 1
         logger.error("Could not fetch %s: %s", label, exc)
+        error_logger.error("Could not fetch %s: %s", label, exc)
         return []
+
+
+def count_found_prices(prices: dict, symbols: list[str]) -> int:
+    if not isinstance(prices, dict):
+        return 0
+
+    return sum(1 for symbol in symbols if prices.get(symbol, {}).get("found"))
+
+
+def new_run_stats() -> dict:
+    return {
+        "pending_signals_count": 0,
+        "pending_prices_found_count": 0,
+        "pending_prices_missing_count": 0,
+        "entries_triggered_count": 0,
+        "active_trades_count": 0,
+        "active_prices_found_count": 0,
+        "active_prices_missing_count": 0,
+        "metrics_updated_count": 0,
+        "tp_sl_events_detected_count": 0,
+        "gain_events_detected_count": 0,
+        "post_sl_trades_count": 0,
+        "post_sl_events_detected_count": 0,
+        "api_errors_count": 0,
+        "coindcx_errors_count": 0,
+        "missing_symbol_count": 0,
+        "events_sent_count": 0,
+    }
 
 
 def summarize_response(response) -> str:

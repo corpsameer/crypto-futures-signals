@@ -8,6 +8,7 @@ use App\Models\TradeSignal;
 use App\Services\SignalParserService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
 
@@ -55,6 +56,19 @@ class PastedSignalController extends Controller
             'source' => PastedSignal::SOURCE_MANUAL_PASTE,
             'pasted_at' => now(),
         ]);
+
+        if (! $parserResult['success']) {
+            Log::warning('[CFS Parser] Parse failed pasted_signal_id='.$pastedSignal->id, [
+                'errors' => $parserResult['errors'] ?? [],
+                'raw_preview' => substr($validated['raw_text'], 0, 200),
+            ]);
+        } elseif (! empty($parserResult['warnings'])) {
+            Log::info('[CFS Parser] Parse succeeded with warnings pasted_signal_id='.$pastedSignal->id, [
+                'warnings' => $parserResult['warnings'],
+            ]);
+        } else {
+            Log::info('[CFS Parser] Parse succeeded pasted_signal_id='.$pastedSignal->id.' symbol='.($parserResult['data']['symbol'] ?? '').' trader='.($traderName ?? ''));
+        }
 
         $message = $parserResult['success']
             ? 'Signal pasted and parsed successfully. Please review before saving.'
