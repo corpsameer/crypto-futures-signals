@@ -113,6 +113,7 @@
                     ? 'Avg Max Gain: ' . $formatPercent($bestMarketCondition->avg_max_gain_percent) . ' | Trades: ' . $bestMarketCondition->trade_count
                     : 'No entry market condition data yet',
                 'class' => 'border-secondary',
+                'url' => route('cryptofuturesignals.market-analysis.index'),
             ],
         ];
     @endphp

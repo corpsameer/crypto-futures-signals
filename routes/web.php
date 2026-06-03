@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\MarketAnalysisController;
 use App\Http\Controllers\PastedSignalController;
 use App\Http\Controllers\SimulatedTradeController;
 use App\Http\Controllers\TradeSignalController;
@@ -26,5 +27,6 @@ Route::prefix('cryptofuturesignals')
                 Route::get('/trade-signals/{tradeSignal}', [TradeSignalController::class, 'show'])->name('trade-signals.show');
                 Route::get('/trades', [SimulatedTradeController::class, 'index'])->name('trades.index');
                 Route::get('/traders', [TraderPerformanceController::class, 'index'])->name('traders.index');
+                Route::get('/market-analysis', [MarketAnalysisController::class, 'index'])->name('market-analysis.index');
             });
     });
