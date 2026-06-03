@@ -459,3 +459,58 @@ python python/price_monitor.py --once --skip-config-check
 ```
 
 Phase 1 Python monitoring is data-collection setup only: no live trading, no authenticated CoinDCX API calls, and no Telegram API integration.
+
+## Running the Python Monitor with Supervisor
+
+Use Supervisor to keep the Python monitor running continuously on a server. Do **not** install Supervisor automatically from this project, and do **not** edit server files directly from the application codebase. Review the example config first, then copy it manually on the server.
+
+The example Supervisor config is available at:
+
+```text
+deploy/supervisor/crypto-futures-monitor.conf.example
+```
+
+It uses `/var/www/crypto-futures-signals` as the project path placeholder and runs:
+
+```bash
+/usr/bin/python3 /var/www/crypto-futures-signals/python/price_monitor.py
+```
+
+The monitor itself polls CoinDCX every 2 seconds. Do **not** schedule it every minute via cron for price fetching; Supervisor should keep the long-running monitor process alive. Cron may be used only as an optional watchdog later, not as the price-fetching scheduler.
+
+On the server, copy the reviewed example config into Supervisor's config directory:
+
+```bash
+sudo cp deploy/supervisor/crypto-futures-monitor.conf.example /etc/supervisor/conf.d/crypto-futures-monitor.conf
+```
+
+Ask Supervisor to read and apply the new config:
+
+```bash
+sudo supervisorctl reread
+sudo supervisorctl update
+```
+
+Start the monitor process:
+
+```bash
+sudo supervisorctl start crypto-futures-monitor
+```
+
+Check process status:
+
+```bash
+sudo supervisorctl status
+```
+
+Restart the monitor after code or configuration changes:
+
+```bash
+sudo supervisorctl restart crypto-futures-monitor
+```
+
+Follow the monitor's Supervisor output log:
+
+```bash
+sudo supervisorctl tail -f crypto-futures-monitor
+```
