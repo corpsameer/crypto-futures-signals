@@ -95,6 +95,7 @@
                     ? 'Avg Max Gain: ' . $formatPercent($bestTrader->avg_max_gain_percent) . ' | Trades: ' . $bestTrader->trade_count
                     : 'No trader performance data yet',
                 'class' => 'border-success',
+                'url' => route('cryptofuturesignals.traders.index'),
             ],
             [
                 'label' => 'Worst Trader',
@@ -103,6 +104,7 @@
                     ? 'Avg Max Loss: ' . $formatPercent($worstTrader->avg_max_loss_percent) . ' | Trades: ' . $worstTrader->trade_count
                     : 'No trader loss data yet',
                 'class' => 'border-danger',
+                'url' => route('cryptofuturesignals.traders.index'),
             ],
             [
                 'label' => 'Best Market Condition',
