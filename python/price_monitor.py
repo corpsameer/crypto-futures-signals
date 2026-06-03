@@ -403,18 +403,20 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
             )
             return
 
+        entry_trigger_price = trigger_result["entry_trigger_price"]
         logger.info(
-            "Entry triggered for signal %s %s at fill price %s (current price %s).",
+            "Entry triggered for signal %s %s at observed entry trigger price %s.",
             signal_id,
             symbol,
-            trigger_result.get("fill_price"),
-            current_price,
+            entry_trigger_price,
         )
 
         payload = {
             "trade_signal_id": signal_id,
-            "entry_price": trigger_result["fill_price"],
-            "current_price": current_price,
+            # Simulation only: Laravel stores this observed CoinDCX trigger price
+            # as simulated_trades.entry_price. No live order is placed.
+            "entry_price": entry_trigger_price,
+            "current_price": entry_trigger_price,
             "event_timestamp": timestamp(),
             "actual_price_move_percent": trigger_result["actual_price_move_percent"],
             "leveraged_pnl_percent": trigger_result["leveraged_pnl_percent"],
