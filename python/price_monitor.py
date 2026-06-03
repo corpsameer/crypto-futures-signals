@@ -9,8 +9,10 @@ from constants import (
     COINDCX_MARKET_URL,
     ENTRY_VALID_HOURS,
     LARAVEL_BASE_URL,
+    LARAVEL_REFRESH_INTERVAL_SECONDS,
     POLL_INTERVAL_SECONDS,
     POST_SL_TRACKING_DAYS,
+    PRICE_POLL_INTERVAL_SECONDS,
     PYTHON_API_TOKEN,
     require_config,
 )
@@ -37,7 +39,7 @@ error_logger = get_error_logger()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Crypto Futures Signal Analyzer price monitor skeleton.")
+    parser = argparse.ArgumentParser(description="Crypto Futures Signal Analyzer price monitor.")
     parser.add_argument("--once", action="store_true", help="Run one monitor check and exit.")
     parser.add_argument(
         "--skip-config-check",
@@ -62,25 +64,84 @@ def main() -> int:
         run_check(laravel_client, coindcx_client, mode="once")
         return 0
 
-    while True:
-        try:
-            logger.info("Running monitor check...")
-            run_check(laravel_client, coindcx_client, mode="loop")
-        except Exception as exc:
-            logger.exception("Monitor check failed: %s", exc)
+    run_continuous_monitor(laravel_client, coindcx_client)
+    return 0
 
-        time.sleep(POLL_INTERVAL_SECONDS)
+
+def run_continuous_monitor(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient) -> None:
+    """Run the high-frequency CoinDCX polling loop with slower Laravel cache refreshes."""
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    cache = new_trade_cache()
+    totals = new_run_stats()
+    last_laravel_refresh_at = 0.0
+    last_summary_at = time.monotonic()
+    poll_count = 0
+
+    logger.info(
+        "[CFS Monitor Startup] run_id=%s mode=continuous price_poll_interval=%s laravel_refresh_interval=%s laravel_base_url=%s coindcx_market_url=%s entry_valid_hours=%s post_sl_tracking_days=%s",
+        run_id,
+        PRICE_POLL_INTERVAL_SECONDS,
+        LARAVEL_REFRESH_INTERVAL_SECONDS,
+        LARAVEL_BASE_URL,
+        COINDCX_MARKET_URL,
+        ENTRY_VALID_HOURS,
+        POST_SL_TRACKING_DAYS,
+    )
+
+    try:
+        while True:
+            poll_started_at = time.monotonic()
+            now = poll_started_at
+
+            if now - last_laravel_refresh_at >= LARAVEL_REFRESH_INTERVAL_SECONDS:
+                refresh_stats = new_run_stats()
+                refresh_laravel_cache(laravel_client, cache, refresh_stats)
+                merge_stats(totals, refresh_stats)
+                last_laravel_refresh_at = time.monotonic()
+
+            poll_count += 1
+            poll_stats = new_run_stats()
+            process_price_poll(
+                laravel_client,
+                coindcx_client,
+                cache["pending_signals"],
+                cache["active_trades"],
+                cache["post_sl_trades"],
+                poll_stats,
+                mode="continuous",
+                poll_number=poll_count,
+            )
+            merge_stats(totals, poll_stats)
+
+            if time.monotonic() - last_summary_at >= max(60, LARAVEL_REFRESH_INTERVAL_SECONDS):
+                log_run_summary(run_id, totals, prefix="[CFS Continuous Summary]")
+                last_summary_at = time.monotonic()
+
+            elapsed = time.monotonic() - poll_started_at
+            sleep_seconds = max(0, PRICE_POLL_INTERVAL_SECONDS - elapsed)
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+    except KeyboardInterrupt:
+        logger.info("[CFS Monitor Shutdown] run_id=%s reason=keyboard_interrupt", run_id)
+    except Exception as exc:
+        logger.exception("[CFS Monitor Fatal Error] run_id=%s error=%s", run_id, exc)
+        error_logger.exception("[CFS Monitor Fatal Error] run_id=%s error=%s", run_id, exc)
+    finally:
+        log_run_summary(run_id, totals, prefix="[CFS Monitor Final Summary]")
+        logger.info("[CFS Monitor Shutdown] run_id=%s completed_at=%s", run_id, timestamp())
 
 
 def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, mode: str = "once") -> None:
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    started_at = timestamp()
     stats = new_run_stats()
+    cache = new_trade_cache()
     logger.info(
-        "[CFS Monitor Run] run_id=%s started_at=%s mode=%s laravel_base_url=%s coindcx_market_url=%s poll_interval=%s entry_valid_hours=%s post_sl_tracking_days=%s",
+        "[CFS Monitor Run] run_id=%s started_at=%s mode=%s price_poll_interval=%s laravel_refresh_interval=%s laravel_base_url=%s coindcx_market_url=%s legacy_poll_interval=%s entry_valid_hours=%s post_sl_tracking_days=%s",
         run_id,
-        started_at,
+        timestamp(),
         mode,
+        PRICE_POLL_INTERVAL_SECONDS,
+        LARAVEL_REFRESH_INTERVAL_SECONDS,
         LARAVEL_BASE_URL,
         COINDCX_MARKET_URL,
         POLL_INTERVAL_SECONDS,
@@ -89,67 +150,198 @@ def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, m
     )
 
     try:
-        pending_signals = extract_items(fetch_with_error("pending signals", laravel_client.get_pending_signals, stats))
-        stats["pending_signals_count"] = len(pending_signals)
-        logger.info("Pending signals count: %d", len(pending_signals))
-
-        pending_symbols = collect_symbols(pending_signals)
-        if pending_symbols:
-            pending_prices = fetch_prices(coindcx_client, pending_symbols, "entry trigger checks", stats)
-            stats["pending_prices_found_count"] = count_found_prices(pending_prices, pending_symbols)
-            stats["pending_prices_missing_count"] = len(pending_symbols) - stats["pending_prices_found_count"]
-            for signal in pending_signals:
-                process_pending_signal(signal, pending_prices, laravel_client, coindcx_client, stats)
-        else:
-            logger.info("No pending signal symbols to price-check.")
-
-        active_trades = extract_items(fetch_with_error("active simulated trades", laravel_client.get_active_trades, stats))
-        stats["active_trades_count"] = len(active_trades)
-        logger.info("Active trades count: %d", len(active_trades))
-
-        active_symbols = collect_trade_symbols(active_trades)
-        if active_symbols:
-            active_prices = fetch_prices(coindcx_client, active_symbols, "active trade TP/SL tracking", stats)
-            stats["active_prices_found_count"] = count_found_prices(active_prices, active_symbols)
-            stats["active_prices_missing_count"] = len(active_symbols) - stats["active_prices_found_count"]
-            for trade in active_trades:
-                process_active_trade(trade, active_prices, laravel_client, coindcx_client, stats)
-        else:
-            logger.info("No active trade symbols to price-check.")
-
-        post_sl_trades = extract_items(fetch_with_error("post-SL tracking trades", laravel_client.get_post_sl_tracking_trades, stats))
-        stats["post_sl_trades_count"] = len(post_sl_trades)
-        logger.info("Post-SL tracking trades count: %d", len(post_sl_trades))
-
-        post_sl_symbols = collect_trade_symbols(post_sl_trades)
-        if post_sl_symbols:
-            post_sl_prices = fetch_prices(coindcx_client, post_sl_symbols, "post-SL tracking", stats)
-            for trade in post_sl_trades:
-                process_post_sl_trade(trade, post_sl_prices, laravel_client, coindcx_client, stats)
-        else:
-            logger.info("No post-SL tracking trade symbols to price-check.")
+        refresh_laravel_cache(laravel_client, cache, stats)
+        process_price_poll(
+            laravel_client,
+            coindcx_client,
+            cache["pending_signals"],
+            cache["active_trades"],
+            cache["post_sl_trades"],
+            stats,
+            mode=mode,
+            poll_number=1,
+        )
     except Exception as exc:
         logger.exception("[CFS Monitor Error] run_id=%s error=%s", run_id, exc)
         error_logger.exception("[CFS Monitor Error] run_id=%s error=%s", run_id, exc)
     finally:
-        completed_at = timestamp()
+        log_run_summary(run_id, stats, prefix="[CFS Monitor Summary]")
+
+
+def new_trade_cache() -> dict:
+    return {
+        "pending_signals": [],
+        "active_trades": [],
+        "post_sl_trades": [],
+        "last_refresh_success_at": None,
+        "last_refresh_error": None,
+    }
+
+
+def refresh_laravel_cache(laravel_client: LaravelApiClient, cache: dict, stats: dict) -> bool:
+    """Refresh cached Laravel trade lists, preserving previous cache on failure."""
+    try:
+        pending_signals = extract_items(laravel_client.get_pending_signals())
+        active_trades = extract_items(laravel_client.get_active_trades())
+        post_sl_trades = extract_items(laravel_client.get_post_sl_tracking_trades())
+    except Exception as exc:
+        stats["api_errors_count"] += 1
+        cache["last_refresh_error"] = str(exc)
+        logger.error(
+            "[CFS Laravel Cache Refresh] status=failed error=%s cached_pending=%d cached_active=%d cached_post_sl=%d unique_symbol_count=%d",
+            exc,
+            len(cache["pending_signals"]),
+            len(cache["active_trades"]),
+            len(cache["post_sl_trades"]),
+            len(collect_required_symbols(cache["pending_signals"], cache["active_trades"], cache["post_sl_trades"])),
+        )
+        error_logger.error("[CFS Laravel Cache Refresh] status=failed error=%s", exc)
+        return False
+
+    cache["pending_signals"] = pending_signals
+    cache["active_trades"] = active_trades
+    cache["post_sl_trades"] = post_sl_trades
+    cache["last_refresh_success_at"] = timestamp()
+    cache["last_refresh_error"] = None
+
+    stats["pending_signals_count"] = len(pending_signals)
+    stats["active_trades_count"] = len(active_trades)
+    stats["post_sl_trades_count"] = len(post_sl_trades)
+
+    symbols = collect_required_symbols(pending_signals, active_trades, post_sl_trades)
+    logger.info(
+        "[CFS Laravel Cache Refresh] status=success pending=%d active=%d post_sl=%d unique_symbol_count=%d symbols=%s refreshed_at=%s",
+        len(pending_signals),
+        len(active_trades),
+        len(post_sl_trades),
+        len(symbols),
+        symbols,
+        cache["last_refresh_success_at"],
+    )
+    return True
+
+
+def process_price_poll(
+    laravel_client: LaravelApiClient,
+    coindcx_client: CoinDCXClient,
+    pending_signals: list[dict],
+    active_trades: list[dict],
+    post_sl_trades: list[dict],
+    stats: dict,
+    *,
+    mode: str,
+    poll_number: int,
+) -> None:
+    symbols = collect_required_symbols(pending_signals, active_trades, post_sl_trades)
+    stats["pending_signals_count"] = len(pending_signals)
+    stats["active_trades_count"] = len(active_trades)
+    stats["post_sl_trades_count"] = len(post_sl_trades)
+
+    if not symbols:
         logger.info(
-            "[CFS Monitor Summary] run_id=%s pending=%d active=%d post_sl=%d entries_triggered=%d events_sent=%d metrics_updated=%d missing_prices=%d api_errors=%d coindcx_errors=%d tp_sl_events=%d gain_events=%d post_sl_events=%d completed_at=%s",
-            run_id,
-            stats["pending_signals_count"],
-            stats["active_trades_count"],
-            stats["post_sl_trades_count"],
-            stats["entries_triggered_count"],
+            "[CFS Price Poll Summary] mode=%s poll=%d status=no_symbols pending=%d active=%d post_sl=%d price_poll_interval=%s laravel_refresh_interval=%s events_sent=%d api_errors=%d coindcx_errors=%d",
+            mode,
+            poll_number,
+            len(pending_signals),
+            len(active_trades),
+            len(post_sl_trades),
+            PRICE_POLL_INTERVAL_SECONDS,
+            LARAVEL_REFRESH_INTERVAL_SECONDS,
             stats["events_sent_count"],
-            stats["metrics_updated_count"],
-            stats["missing_symbol_count"],
             stats["api_errors_count"],
             stats["coindcx_errors_count"],
-            stats["tp_sl_events_detected_count"],
-            stats["gain_events_detected_count"],
-            stats["post_sl_events_detected_count"],
-            completed_at,
         )
+        return
+
+    prices = fetch_prices(coindcx_client, symbols, "cached pending/active/post-SL tracking", stats)
+    if not prices:
+        logger.error(
+            "[CFS Price Poll Summary] mode=%s poll=%d status=price_fetch_failed requested_symbols=%s pending=%d active=%d post_sl=%d api_errors=%d coindcx_errors=%d",
+            mode,
+            poll_number,
+            symbols,
+            len(pending_signals),
+            len(active_trades),
+            len(post_sl_trades),
+            stats["api_errors_count"],
+            stats["coindcx_errors_count"],
+        )
+        return
+
+    found_count = count_found_prices(prices, symbols)
+    missing_count = len(symbols) - found_count
+    stats["pending_prices_found_count"] = count_found_prices(prices, collect_symbols(pending_signals))
+    stats["pending_prices_missing_count"] = len(collect_symbols(pending_signals)) - stats["pending_prices_found_count"]
+    stats["active_prices_found_count"] = count_found_prices(prices, collect_trade_symbols(active_trades))
+    stats["active_prices_missing_count"] = len(collect_trade_symbols(active_trades)) - stats["active_prices_found_count"]
+
+    for signal in pending_signals:
+        process_pending_signal(signal, prices, laravel_client, coindcx_client, stats)
+
+    for trade in active_trades:
+        process_active_trade(trade, prices, laravel_client, coindcx_client, stats)
+
+    for trade in post_sl_trades:
+        process_post_sl_trade(trade, prices, laravel_client, coindcx_client, stats)
+
+    logger.info(
+        "[CFS Price Poll Summary] mode=%s poll=%d status=processed requested_symbols=%s found=%d missing=%d pending=%d active=%d post_sl=%d entries_triggered=%d events_sent=%d metrics_updated=%d api_errors=%d coindcx_errors=%d missing_prices=%d",
+        mode,
+        poll_number,
+        symbols,
+        found_count,
+        missing_count,
+        len(pending_signals),
+        len(active_trades),
+        len(post_sl_trades),
+        stats["entries_triggered_count"],
+        stats["events_sent_count"],
+        stats["metrics_updated_count"],
+        stats["api_errors_count"],
+        stats["coindcx_errors_count"],
+        stats["missing_symbol_count"],
+    )
+
+
+def collect_required_symbols(pending_signals: list[dict], active_trades: list[dict], post_sl_trades: list[dict]) -> list[str]:
+    symbols = []
+    seen = set()
+
+    for symbol in collect_symbols(pending_signals) + collect_trade_symbols(active_trades) + collect_trade_symbols(post_sl_trades):
+        if symbol in seen:
+            continue
+
+        symbols.append(symbol)
+        seen.add(symbol)
+
+    return symbols
+
+
+def merge_stats(total: dict, increment: dict) -> None:
+    for key, value in increment.items():
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+
+
+def log_run_summary(run_id: str, stats: dict, prefix: str) -> None:
+    logger.info(
+        "%s run_id=%s pending=%d active=%d post_sl=%d entries_triggered=%d events_sent=%d metrics_updated=%d missing_prices=%d api_errors=%d coindcx_errors=%d tp_sl_events=%d gain_events=%d post_sl_events=%d completed_at=%s",
+        prefix,
+        run_id,
+        stats["pending_signals_count"],
+        stats["active_trades_count"],
+        stats["post_sl_trades_count"],
+        stats["entries_triggered_count"],
+        stats["events_sent_count"],
+        stats["metrics_updated_count"],
+        stats["missing_symbol_count"],
+        stats["api_errors_count"],
+        stats["coindcx_errors_count"],
+        stats["tp_sl_events_detected_count"],
+        stats["gain_events_detected_count"],
+        stats["post_sl_events_detected_count"],
+        timestamp(),
+    )
 
 
 def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, stats: dict) -> None:
@@ -548,9 +740,8 @@ def collect_trade_symbols(trades: list[dict]) -> list[str]:
 
 
 def fetch_prices(coindcx_client: CoinDCXClient, symbols: list[str], purpose: str, stats: dict) -> dict:
-    before_failed = getattr(coindcx_client, "last_fetch_failed", False)
     prices = fetch_with_error("CoinDCX prices", lambda: coindcx_client.get_prices_for_symbols(symbols), stats, is_api=False)
-    if getattr(coindcx_client, "last_fetch_failed", False) and not before_failed:
+    if getattr(coindcx_client, "last_fetch_failed", False):
         stats["coindcx_errors_count"] += 1
 
     if not isinstance(prices, dict):
@@ -634,7 +825,9 @@ def print_config_summary(skip_config_check: bool) -> None:
     logger.info("Crypto Futures Signal Analyzer Python monitor")
     logger.info("Laravel base URL: %s", LARAVEL_BASE_URL)
     logger.info("CoinDCX market URL: %s", COINDCX_MARKET_URL)
-    logger.info("Poll interval seconds: %s", POLL_INTERVAL_SECONDS)
+    logger.info("Legacy poll interval seconds: %s", POLL_INTERVAL_SECONDS)
+    logger.info("Price poll interval seconds: %s", PRICE_POLL_INTERVAL_SECONDS)
+    logger.info("Laravel refresh interval seconds: %s", LARAVEL_REFRESH_INTERVAL_SECONDS)
     logger.info("Entry valid hours: %s", ENTRY_VALID_HOURS)
     logger.info("Post-SL tracking days: %s", POST_SL_TRACKING_DAYS)
     logger.info("API token configured: %s", "yes" if bool(PYTHON_API_TOKEN) else "no")
