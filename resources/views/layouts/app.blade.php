@@ -28,6 +28,7 @@
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.trades.index') }}">Simulated Trades</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.traders.index') }}">Trader Performance</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.market-analysis.index') }}">Market Analysis</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.logs.index') }}">System Logs</a></li>
                     @auth
                         <li class="nav-item ms-lg-3">
                             <span class="navbar-text text-light">{{ auth()->user()->name }}</span>

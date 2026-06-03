@@ -179,3 +179,15 @@ Python monitor logs are written under `python/logs/`:
 - `python/logs/errors.log` — shared Python error log for CoinDCX and Laravel API failures.
 
 CoinDCX price fetch logging intentionally records only requested symbols, returned prices/status, and missing-symbol details; it does not write huge raw ticker payloads in normal logs. API tokens and authorization header values are never logged. These logs are intended for local/VPS debugging only and are not a log viewer, alerting system, or external logging integration.
+
+## System Logs UI
+
+The Laravel app includes a simple authenticated browser log viewer at:
+
+- `/cryptofuturesignals/logs`
+
+The page requires login and reads from predefined file logs only. It does not create database log tables, store logs in the database, delete logs, or expose arbitrary file paths. The most important file for price-fetch visibility is:
+
+- `python/logs/coindcx_prices.log`
+
+Use this page to inspect recent CoinDCX requested pairs, returned prices, found/missing statuses, Python monitor summaries, Python error logs, and Laravel log entries from local/VPS file storage.
