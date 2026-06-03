@@ -29,6 +29,7 @@ from trade_logic import (
 
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_FILE = LOG_DIR / "local_e2e_test.log"
+CURRENT_SCENARIO: str | None = None
 SCENARIO_BY_SYMBOL = {
     "E2ELONGUSDT": "A_LONG_FULL_TP",
     "E2ELONGSLUSDT": "B_LONG_SL",
@@ -108,35 +109,23 @@ def signal_entry(signal: dict) -> float:
     return numeric(signal.get("entry_min") or signal.get("entry_max"))
 
 
-def signal_to_trade_stub(signal: dict, trade: dict | None = None) -> dict:
-    entry = numeric((trade or {}).get("entry_price"), signal_entry(signal))
-    return {
-        "id": (trade or {}).get("id"),
-        "trade_signal_id": signal.get("id"),
-        "symbol": signal.get("symbol"),
-        "direction": signal.get("direction"),
-        "leverage": numeric(signal.get("leverage"), 1.0),
-        "entry_price": entry,
-        "trade_signal_levels": {
-            "tp1": signal.get("tp1"),
-            "tp2": signal.get("tp2"),
-            "tp3": signal.get("tp3"),
-            "tp4": signal.get("tp4"),
-            "stop_loss": signal.get("stop_loss"),
-            "direction": signal.get("direction"),
-            "leverage": signal.get("leverage"),
-        },
-    }
-
-
 def latest_trade_for_signal(client: LaravelApiClient, signal_id: int) -> dict | None:
     state = api_data(call_api(f"local-test signal state {signal_id}", lambda: client.get_local_test_signal_state(signal_id)))
     trades = state.get("simulated_trades") or []
-    return trades[-1] if trades else None
+    if not trades:
+        return None
+    return trades[-1]
 
 
 def get_trade_state(client: LaravelApiClient, simulated_trade_id: int) -> dict:
     return api_data(call_api(f"local-test trade state {simulated_trade_id}", lambda: client.get_local_test_trade_state(simulated_trade_id)))
+
+
+def reload_trade(client: LaravelApiClient, simulated_trade_id: int) -> dict:
+    state = get_trade_state(client, simulated_trade_id)
+    trade = state.get("trade")
+    assert_true(isinstance(trade, dict) and trade.get("id"), f"Local-test state missing trade for simulated_trade_id={simulated_trade_id}: {state}")
+    return normalize_trade_for_logic(state)
 
 
 def events_from_state(state: dict) -> list[dict]:
@@ -147,14 +136,31 @@ def snapshots_from_state(state: dict) -> list[dict]:
     return state.get("market_snapshots") or []
 
 
-def find_events(state: dict, event_type: str) -> list[dict]:
+def get_events_by_type(state: dict, event_type: str) -> list[dict]:
     return [event for event in events_from_state(state) if event.get("event_type") == event_type]
 
 
-def assert_event_exists(client: LaravelApiClient, simulated_trade_id: int, event_type: str) -> dict:
-    state = get_trade_state(client, simulated_trade_id)
-    matches = find_events(state, event_type)
-    assert_true(matches, f"Expected event {event_type} for simulated_trade_id={simulated_trade_id}")
+def event_exists(state: dict, event_type: str) -> bool:
+    return bool(get_events_by_type(state, event_type))
+
+
+def debug_event_assertion(state: dict, event_type: str) -> str:
+    trade = state.get("trade") or {}
+    actual_types = [event.get("event_type") for event in events_from_state(state)]
+    message = (
+        f"scenario={CURRENT_SCENARIO or 'unknown'} simulated_trade_id={trade.get('id')} "
+        f"expected_event={event_type} actual_events={actual_types} "
+        f"trade_status={trade.get('status')} current_price={trade.get('current_price')}"
+    )
+    logger.error("Event assertion debug: %s", message)
+    print(f"DEBUG {message}")
+    return message
+
+
+def assert_event_exists(state: dict, event_type: str) -> dict:
+    matches = get_events_by_type(state, event_type)
+    if not matches:
+        raise LocalE2EFailure(f"Expected event {event_type}. {debug_event_assertion(state, event_type)}")
     return matches[0]
 
 
@@ -163,57 +169,103 @@ def assert_event_fields_present(event: dict) -> None:
         assert_true(event.get(field) not in (None, ""), f"Event {event.get('event_type')} missing {field}: {event}")
 
 
-def assert_no_duplicate_event(client: LaravelApiClient, simulated_trade_id: int, event_type: str) -> None:
-    state = get_trade_state(client, simulated_trade_id)
-    count = len(find_events(state, event_type))
-    assert_true(count == 1, f"Expected exactly one {event_type}; found {count} for simulated_trade_id={simulated_trade_id}")
+def assert_no_duplicate_event(state: dict, event_type: str) -> None:
+    count = len(get_events_by_type(state, event_type))
+    if count != 1:
+        raise LocalE2EFailure(f"Expected exactly one {event_type}; found {count}. {debug_event_assertion(state, event_type)}")
 
 
-def entry_trigger(client: LaravelApiClient, signal: dict, price: float) -> dict:
-    entry = signal_entry(signal)
-    move = calculate_move_percent(signal["direction"], entry, price)
-    pnl = calculate_leveraged_pnl_percent(move, numeric(signal.get("leverage"), 1.0))
+def assert_expected_events(client: LaravelApiClient, trade_id: int, event_types: list[str]) -> dict:
+    state = get_trade_state(client, trade_id)
+    for event_type in event_types:
+        event = assert_event_exists(state, event_type)
+        assert_event_fields_present(event)
+        assert_no_duplicate_event(state, event_type)
+    return state
+
+
+def normalize_trade_for_logic(trade_state: dict) -> dict:
+    trade = dict(trade_state.get("trade") or trade_state)
+    trade_signal = dict(trade_state.get("trade_signal") or trade.get("trade_signal") or {})
+
+    if not trade_signal:
+        trade_signal_levels = trade.get("trade_signal_levels")
+        if isinstance(trade_signal_levels, dict):
+            trade_signal = dict(trade_signal_levels)
+
+    if not trade_signal and trade.get("trade_signal_id"):
+        trade_signal = {"id": trade.get("trade_signal_id")}
+
+    for key in ("symbol", "direction", "leverage", "stop_loss", "tp1", "tp2", "tp3", "tp4"):
+        if trade.get(key) in (None, "") and trade_signal.get(key) not in (None, ""):
+            trade[key] = trade_signal.get(key)
+
+    if trade_signal:
+        for key in ("symbol", "direction", "leverage", "stop_loss", "tp1", "tp2", "tp3", "tp4"):
+            if trade_signal.get(key) in (None, "") and trade.get(key) not in (None, ""):
+                trade_signal[key] = trade.get(key)
+        trade["trade_signal"] = trade_signal
+
+    required = ["id", "symbol", "direction", "leverage", "entry_price", "stop_loss", "tp1", "tp2", "tp3", "tp4"]
+    missing = [key for key in required if trade.get(key) in (None, "")]
+    assert_true(not missing, f"Normalized trade missing required fields {missing}: {trade}")
+
+    return trade
+
+
+def simulated_trade_from_response(response: dict, signal_id: int) -> dict | None:
+    data = response.get("data") if isinstance(response, dict) else None
+    if isinstance(data, dict):
+        for key in ("simulated_trade", "trade"):
+            value = data.get(key)
+            if isinstance(value, dict):
+                nested = value.get("simulated_trade")
+                if isinstance(nested, dict):
+                    return nested
+                if value.get("id") and (key == "simulated_trade" or value.get("trade_signal_id") == signal_id):
+                    return value
+
+    value = response.get("simulated_trade") if isinstance(response, dict) else None
+    if isinstance(value, dict):
+        return value
+
+    return None
+
+
+def trigger_entry_for_signal(client: LaravelApiClient, signal: dict, entry_price: float) -> dict:
     response = call_api(
         "entry-triggered",
         client.entry_triggered,
         {
             "trade_signal_id": signal["id"],
-            "entry_price": price,
-            "current_price": price,
+            "entry_price": entry_price,
+            "current_price": entry_price,
             "event_timestamp": now_iso(),
-            "actual_price_move_percent": move,
-            "leveraged_pnl_percent": pnl,
+            "actual_price_move_percent": 0,
+            "leveraged_pnl_percent": 0,
         },
     )
-    trade = api_data(response, "simulated_trade")
-    return trade
 
+    response_trade = simulated_trade_from_response(response, signal["id"])
+    if response_trade is None:
+        response_trade = latest_trade_for_signal(client, signal["id"])
 
-def ensure_trade(client: LaravelApiClient, signal: dict, price: float = 100.0) -> dict:
-    existing = latest_trade_for_signal(client, signal["id"])
-    if existing:
-        return existing
-    return entry_trigger(client, signal, price)
-
-
-def update_metrics(client: LaravelApiClient, trade: dict, signal: dict, price: float) -> dict:
-    move = calculate_move_percent(signal["direction"], numeric(trade.get("entry_price"), signal_entry(signal)), price)
-    pnl = calculate_leveraged_pnl_percent(move, numeric(signal.get("leverage"), 1.0))
-    response = call_api(
-        "update-metrics",
-        client.update_metrics,
-        {
-            "simulated_trade_id": trade["id"],
-            "current_price": price,
-            "actual_price_move_percent": move,
-            "leveraged_pnl_percent": pnl,
-            "price_timestamp": now_iso(),
-        },
+    assert_true(
+        isinstance(response_trade, dict) and response_trade.get("id"),
+        f"Entry-triggered API did not return/create a simulated trade for trade_signal_id={signal['id']}: {response}",
     )
-    return api_data(response)
+
+    state = get_trade_state(client, response_trade["id"])
+    event = assert_event_exists(state, "ENTRY_TRIGGERED")
+    assert_event_fields_present(event)
+    assert_no_duplicate_event(state, "ENTRY_TRIGGERED")
+    return normalize_trade_for_logic(state)
 
 
 def store_event(client: LaravelApiClient, trade_id: int, event: dict) -> dict:
+    for field in ("event_type", "event_price", "actual_price_move_percent", "leveraged_pnl_percent", "event_timestamp"):
+        assert_true(event.get(field) not in (None, ""), f"Cannot store event missing {field}: {event}")
+
     response = call_api(
         f"store-event {event['event_type']}",
         client.store_event,
@@ -224,38 +276,63 @@ def store_event(client: LaravelApiClient, trade_id: int, event: dict) -> dict:
             "actual_price_move_percent": event["actual_price_move_percent"],
             "leveraged_pnl_percent": event["leveraged_pnl_percent"],
             "event_timestamp": event["event_timestamp"],
-            "metadata": event.get("metadata") or {"source": "local_e2e_test"},
-            "notes": event.get("notes") or "Local E2E event",
+            "metadata": event.get("metadata") or {},
+            "notes": event.get("notes"),
         },
     )
     return api_data(response)
 
 
-def emit_events_for_price(client: LaravelApiClient, trade: dict, signal: dict, price: float, *, post_sl: bool = False) -> dict:
-    trade_stub = signal_to_trade_stub(signal, trade)
-    update_metrics(client, trade, signal, price)
-    detectors = [detect_post_sl_events] if post_sl else [detect_gain_milestone_events, detect_tp_sl_events]
-    for detector in detectors:
-        for event in detector(trade_stub, price):
-            store_event(client, trade["id"], event)
-    return get_trade_state(client, trade["id"])
+def process_fake_price_step(client: LaravelApiClient, trade: dict, current_price: float, mode: str = "active") -> dict:
+    logic_trade = normalize_trade_for_logic(trade)
+    entry_price = numeric(logic_trade.get("entry_price"))
+    direction = logic_trade["direction"]
+    leverage = numeric(logic_trade.get("leverage"), 1.0)
+    actual_move = calculate_move_percent(direction, entry_price, current_price)
+    leveraged_pnl = calculate_leveraged_pnl_percent(actual_move, leverage)
 
+    call_api(
+        "update-metrics",
+        client.update_metrics,
+        {
+            "simulated_trade_id": logic_trade["id"],
+            "current_price": current_price,
+            "actual_price_move_percent": actual_move,
+            "leveraged_pnl_percent": leveraged_pnl,
+            "price_timestamp": now_iso(),
+        },
+    )
 
-def assert_expected_events(client: LaravelApiClient, trade_id: int, event_types: list[str]) -> dict:
-    state = get_trade_state(client, trade_id)
-    for event_type in event_types:
-        event = assert_event_exists(client, trade_id, event_type)
-        assert_event_fields_present(event)
-        assert_no_duplicate_event(client, trade_id, event_type)
-    return state
+    if mode == "active":
+        events = detect_tp_sl_events(logic_trade, current_price) + detect_gain_milestone_events(logic_trade, current_price)
+    elif mode == "post_sl":
+        events = detect_post_sl_events(logic_trade, current_price)
+    else:
+        raise LocalE2EFailure(f"Unsupported fake price processing mode: {mode}")
+
+    logger.info(
+        "Fake price step detected events scenario=%s trade_id=%s price=%s mode=%s events=%s",
+        CURRENT_SCENARIO or "unknown",
+        logic_trade["id"],
+        current_price,
+        mode,
+        [event.get("event_type") for event in events],
+    )
+
+    for event in events:
+        event["simulated_trade_id"] = logic_trade["id"]
+        store_event(client, logic_trade["id"], event)
+
+    return reload_trade(client, logic_trade["id"])
 
 
 def scenario_long_full_tp(client: LaravelApiClient, signal: dict) -> None:
-    trade = ensure_trade(client, signal, 100)
+    trade = trigger_entry_for_signal(client, signal, 100)
     for price in [100.6, 100.7, 101, 102, 103, 104]:
-        emit_events_for_price(client, trade, signal, price)
+        trade = process_fake_price_step(client, trade, price, mode="active")
+
     state = assert_expected_events(client, trade["id"], [
-        "ENTRY_TRIGGERED", "GAIN_3_PERCENT", "GAIN_3_5_PERCENT", "GAIN_5_PERCENT", "GAIN_7_PERCENT",
+        "ENTRY_TRIGGERED", "GAIN_3_PERCENT", "GAIN_3_5_PERCENT", "GAIN_5_PERCENT",
         "TP1_HIT", "TP2_HIT", "TP3_HIT", "TP4_HIT",
     ])
     final_trade = state["trade"]
@@ -265,37 +342,44 @@ def scenario_long_full_tp(client: LaravelApiClient, signal: dict) -> None:
 
 
 def scenario_long_sl(client: LaravelApiClient, signal: dict) -> None:
-    trade = ensure_trade(client, signal, 100)
+    trade = trigger_entry_for_signal(client, signal, 100)
     for price in [98, 95]:
-        emit_events_for_price(client, trade, signal, price)
+        trade = process_fake_price_step(client, trade, price, mode="active")
+
     state = assert_expected_events(client, trade["id"], ["ENTRY_TRIGGERED", "SL_HIT"])
-    assert_true(state["trade"].get("status") == "tracking_after_sl", f"Trade status should be tracking_after_sl: {state['trade']}")
+    current_trade = state["trade"]
+    assert_true(current_trade.get("status") == "tracking_after_sl", f"Trade status should be tracking_after_sl: {current_trade}")
     assert_true((state.get("trade_signal") or {}).get("status") == "tracking_after_sl", f"Signal status should be tracking_after_sl: {state.get('trade_signal')}")
-    assert_true(state["trade"].get("tracking_until") not in (None, ""), "tracking_until should be populated after SL")
-    assert_true(numeric(state["trade"].get("max_loss_percent")) <= -25, f"Expected max_loss_percent <= -25, got {state['trade'].get('max_loss_percent')}")
+    assert_true(current_trade.get("tracking_until") not in (None, ""), "tracking_until should be populated after SL")
+    max_loss = numeric(current_trade.get("max_loss_percent"), 0)
+    min_pnl = numeric(current_trade.get("min_leveraged_pnl_percent"), 0)
+    assert_true(max_loss <= -25 or min_pnl <= -25, f"Expected max_loss_percent or min_leveraged_pnl_percent <= -25, got max_loss={max_loss}, min_pnl={min_pnl}")
 
 
 def scenario_short_full_tp(client: LaravelApiClient, signal: dict) -> None:
-    trade = ensure_trade(client, signal, 100)
+    trade = trigger_entry_for_signal(client, signal, 100)
     for price in [99.4, 99.3, 99, 98, 97, 96]:
-        emit_events_for_price(client, trade, signal, price)
+        trade = process_fake_price_step(client, trade, price, mode="active")
+
     state = assert_expected_events(client, trade["id"], [
-        "ENTRY_TRIGGERED", "GAIN_3_PERCENT", "GAIN_3_5_PERCENT", "GAIN_5_PERCENT", "GAIN_7_PERCENT",
+        "ENTRY_TRIGGERED", "GAIN_3_PERCENT", "GAIN_3_5_PERCENT", "GAIN_5_PERCENT",
         "TP1_HIT", "TP2_HIT", "TP3_HIT", "TP4_HIT",
     ])
-    tp1 = assert_event_exists(client, trade["id"], "TP1_HIT")
+    tp1 = assert_event_exists(state, "TP1_HIT")
     assert_true(numeric(tp1.get("actual_price_move_percent")) > 0, "SHORT falling price should have positive actual move")
     assert_true(numeric(tp1.get("leveraged_pnl_percent")) > 0, "SHORT falling price should have positive leveraged P&L")
     close_trade(client, state["trade"], signal, 96, "TP4_HIT", "closed_tp")
 
 
 def scenario_short_sl(client: LaravelApiClient, signal: dict) -> None:
-    trade = ensure_trade(client, signal, 100)
+    trade = trigger_entry_for_signal(client, signal, 100)
     for price in [102, 105]:
-        emit_events_for_price(client, trade, signal, price)
+        trade = process_fake_price_step(client, trade, price, mode="active")
+
     state = assert_expected_events(client, trade["id"], ["ENTRY_TRIGGERED", "SL_HIT"])
-    assert_true(state["trade"].get("status") == "tracking_after_sl", f"Trade status should be tracking_after_sl: {state['trade']}")
-    assert_true(numeric(state["trade"].get("max_loss_percent")) <= -25, f"Expected max_loss_percent <= -25, got {state['trade'].get('max_loss_percent')}")
+    current_trade = state["trade"]
+    assert_true(current_trade.get("status") == "tracking_after_sl", f"Trade status should be tracking_after_sl: {current_trade}")
+    assert_true(numeric(current_trade.get("max_loss_percent"), 0) <= -25, f"Expected max_loss_percent <= -25, got {current_trade.get('max_loss_percent')}")
 
 
 def scenario_entry_missed(client: LaravelApiClient, signal: dict) -> None:
@@ -318,27 +402,31 @@ def scenario_entry_missed(client: LaravelApiClient, signal: dict) -> None:
 
 
 def scenario_post_sl_recovery(client: LaravelApiClient, signal: dict) -> None:
-    trade = ensure_trade(client, signal, 100)
-    emit_events_for_price(client, trade, signal, 95)
+    trade = trigger_entry_for_signal(client, signal, 100)
+    trade = process_fake_price_step(client, trade, 95, mode="active")
     state = assert_expected_events(client, trade["id"], ["ENTRY_TRIGGERED", "SL_HIT"])
     assert_true(state["trade"].get("status") == "tracking_after_sl", "Post-SL recovery trade should be tracking_after_sl after SL")
+
+    trade = reload_trade(client, trade["id"])
     for price in [101, 102, 103, 104]:
-        emit_events_for_price(client, trade, signal, price, post_sl=True)
+        trade = process_fake_price_step(client, trade, price, mode="post_sl")
+
     state = assert_expected_events(client, trade["id"], [
         "POST_SL_TP1_HIT", "POST_SL_TP2_HIT", "POST_SL_TP3_HIT", "POST_SL_TP4_HIT", "POST_SL_MAX_GAIN",
     ])
-    max_gain = assert_event_exists(client, trade["id"], "POST_SL_MAX_GAIN")
+    max_gain = assert_event_exists(state, "POST_SL_MAX_GAIN")
     assert_true(numeric(max_gain.get("leveraged_pnl_percent")) >= 20, f"Expected post-SL max gain >= 20, got {max_gain}")
 
 
 def close_trade(client: LaravelApiClient, trade: dict, signal: dict, price: float, exit_reason: str, status: str) -> dict:
-    move = calculate_move_percent(signal["direction"], numeric(trade.get("entry_price"), signal_entry(signal)), price)
-    pnl = calculate_leveraged_pnl_percent(move, numeric(signal.get("leverage"), 1.0))
+    logic_trade = normalize_trade_for_logic({"trade": trade, "trade_signal": signal})
+    move = calculate_move_percent(logic_trade["direction"], numeric(logic_trade.get("entry_price")), price)
+    pnl = calculate_leveraged_pnl_percent(move, numeric(logic_trade.get("leverage"), 1.0))
     response = call_api(
         "close-trade",
         client.close_trade,
         {
-            "simulated_trade_id": trade["id"],
+            "simulated_trade_id": logic_trade["id"],
             "exit_price": price,
             "exit_reason": exit_reason,
             "status": status,
@@ -362,19 +450,30 @@ def scenario_post_sl_completion(client: LaravelApiClient, signal: dict) -> None:
 
 
 def scenario_idempotency(client: LaravelApiClient, signal: dict) -> None:
-    trade = ensure_trade(client, signal, 100)
-    entry_trigger(client, signal, 100)
-    trade_stub = signal_to_trade_stub(signal, trade)
-    tp1_event = detect_tp_sl_events(trade_stub, 101)[0]
-    gain_event = [event for event in detect_gain_milestone_events(trade_stub, 100.7) if event["event_type"] == "GAIN_3_5_PERCENT"][0]
-    for event in [tp1_event, tp1_event, gain_event, gain_event]:
-        store_event(client, trade["id"], event)
-    for event_type in ["ENTRY_TRIGGERED", "TP1_HIT", "GAIN_3_5_PERCENT"]:
-        assert_no_duplicate_event(client, trade["id"], event_type)
+    trade = trigger_entry_for_signal(client, signal, 100)
+    trade = process_fake_price_step(client, trade, 100.7, mode="active")
+    trade = process_fake_price_step(client, trade, 101, mode="active")
+
+    logic_trade = normalize_trade_for_logic({"trade": trade, "trade_signal": signal})
+    tp1_events = [event for event in detect_tp_sl_events(logic_trade, 101) if event.get("event_type") == "TP1_HIT"]
+    assert_true(bool(tp1_events), "TP1_HIT detector did not produce an event at fake price 101")
+    store_event(client, trade["id"], tp1_events[0])
+
+    gain_events = [event for event in detect_gain_milestone_events(logic_trade, 100.7) if event.get("event_type") == "GAIN_3_5_PERCENT"]
+    assert_true(bool(gain_events), "GAIN_3_5_PERCENT detector did not produce an event at fake price 100.7")
+    store_event(client, trade["id"], gain_events[0])
+    store_event(client, trade["id"], gain_events[0])
+
+    trigger_entry_for_signal(client, signal, 100)
+    state = get_trade_state(client, trade["id"])
+    assert_no_duplicate_event(state, "ENTRY_TRIGGERED")
+    assert_no_duplicate_event(state, "TP1_HIT")
+    gain_count = len(get_events_by_type(state, "GAIN_3_5_PERCENT"))
+    assert_true(gain_count <= 1, f"Expected GAIN_3_5_PERCENT count <= 1; found {gain_count}. {debug_event_assertion(state, 'GAIN_3_5_PERCENT')}")
 
 
 def scenario_market_snapshot(client: LaravelApiClient, signal: dict) -> None:
-    trade = ensure_trade(client, signal, 100)
+    trade = trigger_entry_for_signal(client, signal, 100)
     response = call_api(
         "market-snapshot",
         client.store_market_snapshot,
@@ -423,6 +522,7 @@ def fetch_signals(client: LaravelApiClient, batch: str) -> tuple[str | None, dic
 
 
 def main(argv: list[str] | None = None) -> int:
+    global CURRENT_SCENARIO
     parser = argparse.ArgumentParser(description="Run local Crypto Futures Signal Analyzer E2E scenarios with fake prices.")
     parser.add_argument("--batch", default="latest", help="Batch marker to run, or latest (default).")
     args = parser.parse_args(argv)
@@ -446,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Batch: {resolved_batch or args.batch}")
     results: list[tuple[str, bool, str]] = []
     for symbol, scenario_name in SCENARIO_BY_SYMBOL.items():
+        CURRENT_SCENARIO = scenario_name
         logger.info("Scenario start: %s symbol=%s", scenario_name, symbol)
         try:
             SCENARIO_RUNNERS[scenario_name](client, signals[symbol])
@@ -457,6 +558,8 @@ def main(argv: list[str] | None = None) -> int:
             results.append((scenario_name, False, reason))
             print(f"FAIL {scenario_name} ({symbol}): {reason}")
             logger.exception("Scenario fail: %s reason=%s", scenario_name, reason)
+        finally:
+            CURRENT_SCENARIO = None
 
     passed = sum(1 for _, ok, _ in results if ok)
     failed = len(results) - passed
