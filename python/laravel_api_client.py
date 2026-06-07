@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 import requests
 
@@ -57,6 +57,18 @@ class LaravelApiClient:
 
     def store_market_snapshot(self, payload: dict):
         return self._post("/market-snapshots/store", payload)
+
+    def get_local_test_signals(self, batch: str | None = None):
+        endpoint = "/local-test/signals"
+        if batch:
+            endpoint = f"{endpoint}?{urlencode({'batch': batch})}"
+        return self._get(endpoint)
+
+    def get_local_test_trade_state(self, simulated_trade_id):
+        return self._get(f"/local-test/trade/{simulated_trade_id}/state")
+
+    def get_local_test_signal_state(self, trade_signal_id):
+        return self._get(f"/local-test/signal/{trade_signal_id}/state")
 
     def _get(self, endpoint: str):
         method = "GET"
