@@ -89,6 +89,10 @@ def numeric(value: Any, default: float = 0.0) -> float:
     return float(value)
 
 
+def timestamp_value(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def api_data(response: dict, key: str | None = None):
     assert_true(isinstance(response, dict) and response.get("success") is True, f"API response was not successful: {response}")
     data = response.get("data")
@@ -451,25 +455,101 @@ def scenario_post_sl_completion(client: LaravelApiClient, signal: dict) -> None:
 
 def scenario_idempotency(client: LaravelApiClient, signal: dict) -> None:
     trade = trigger_entry_for_signal(client, signal, 100)
-    trade = process_fake_price_step(client, trade, 100.7, mode="active")
-    trade = process_fake_price_step(client, trade, 101, mode="active")
+    trade_id = trade["id"]
+    t1 = "2026-06-07T10:00:00+00:00"
+    t2 = "2026-06-07T10:01:00+00:00"
+    t3 = "2026-06-07T10:02:00+00:00"
 
-    logic_trade = normalize_trade_for_logic({"trade": trade, "trade_signal": signal})
-    tp1_events = [event for event in detect_tp_sl_events(logic_trade, 101) if event.get("event_type") == "TP1_HIT"]
-    assert_true(bool(tp1_events), "TP1_HIT detector did not produce an event at fake price 101")
-    store_event(client, trade["id"], tp1_events[0])
+    tp1_first = {
+        "event_type": "TP1_HIT",
+        "event_price": 101,
+        "actual_price_move_percent": 1,
+        "leveraged_pnl_percent": 5,
+        "event_timestamp": t1,
+    }
+    tp1_duplicate = {
+        "event_type": "TP1_HIT",
+        "event_price": 102,
+        "actual_price_move_percent": 2,
+        "leveraged_pnl_percent": 10,
+        "event_timestamp": t2,
+    }
+    store_event(client, trade_id, tp1_first)
+    store_event(client, trade_id, tp1_duplicate)
 
-    gain_events = [event for event in detect_gain_milestone_events(logic_trade, 100.7) if event.get("event_type") == "GAIN_3_5_PERCENT"]
-    assert_true(bool(gain_events), "GAIN_3_5_PERCENT detector did not produce an event at fake price 100.7")
-    store_event(client, trade["id"], gain_events[0])
-    store_event(client, trade["id"], gain_events[0])
+    gain_first = {
+        "event_type": "GAIN_3_5_PERCENT",
+        "event_price": 100.7,
+        "actual_price_move_percent": 0.7,
+        "leveraged_pnl_percent": 3.5,
+        "event_timestamp": t1,
+    }
+    gain_duplicate = {
+        "event_type": "GAIN_3_5_PERCENT",
+        "event_price": 101,
+        "actual_price_move_percent": 1,
+        "leveraged_pnl_percent": 5,
+        "event_timestamp": t2,
+    }
+    store_event(client, trade_id, gain_first)
+    store_event(client, trade_id, gain_duplicate)
 
-    trigger_entry_for_signal(client, signal, 100)
-    state = get_trade_state(client, trade["id"])
+    post_sl_first = {
+        "event_type": "POST_SL_MAX_GAIN",
+        "event_price": 101,
+        "actual_price_move_percent": 1,
+        "leveraged_pnl_percent": 5,
+        "event_timestamp": t1,
+    }
+    post_sl_lower = {
+        "event_type": "POST_SL_MAX_GAIN",
+        "event_price": 100.8,
+        "actual_price_move_percent": 0.8,
+        "leveraged_pnl_percent": 4,
+        "event_timestamp": t2,
+    }
+    post_sl_higher = {
+        "event_type": "POST_SL_MAX_GAIN",
+        "event_price": 101.6,
+        "actual_price_move_percent": 1.6,
+        "leveraged_pnl_percent": 8,
+        "event_timestamp": t3,
+    }
+    store_event(client, trade_id, post_sl_first)
+    store_event(client, trade_id, post_sl_lower)
+
+    state = get_trade_state(client, trade_id)
+    post_sl_max = assert_event_exists(state, "POST_SL_MAX_GAIN")
+    assert_true(numeric(post_sl_max.get("leveraged_pnl_percent")) == 5, f"Lower POST_SL_MAX_GAIN should not replace 5%: {post_sl_max}")
+
+    store_event(client, trade_id, post_sl_higher)
+    trigger_entry_for_signal(client, signal, 102)
+    state = get_trade_state(client, trade_id)
+
     assert_no_duplicate_event(state, "ENTRY_TRIGGERED")
+    entry_event = assert_event_exists(state, "ENTRY_TRIGGERED")
+    assert_true(numeric(entry_event.get("event_price")) == 100, f"ENTRY_TRIGGERED should preserve first price 100: {entry_event}")
+    assert_true(numeric((state.get("trade") or {}).get("entry_price")) == 100, f"Trade entry_price should preserve first price 100: {state.get('trade')}")
+
     assert_no_duplicate_event(state, "TP1_HIT")
-    gain_count = len(get_events_by_type(state, "GAIN_3_5_PERCENT"))
-    assert_true(gain_count <= 1, f"Expected GAIN_3_5_PERCENT count <= 1; found {gain_count}. {debug_event_assertion(state, 'GAIN_3_5_PERCENT')}")
+    tp1 = assert_event_exists(state, "TP1_HIT")
+    assert_true(numeric(tp1.get("event_price")) == 101, f"TP1_HIT should preserve first event_price 101: {tp1}")
+    assert_true(timestamp_value(tp1["event_timestamp"]) == timestamp_value(t1), f"TP1_HIT should preserve first timestamp {t1}: {tp1}")
+    assert_true(numeric(tp1.get("actual_price_move_percent")) == 1, f"TP1_HIT should preserve first actual P&L: {tp1}")
+    assert_true(numeric(tp1.get("leveraged_pnl_percent")) == 5, f"TP1_HIT should preserve first leveraged P&L: {tp1}")
+
+    assert_no_duplicate_event(state, "GAIN_3_5_PERCENT")
+    gain = assert_event_exists(state, "GAIN_3_5_PERCENT")
+    assert_true(numeric(gain.get("event_price")) == 100.7, f"GAIN_3_5_PERCENT should preserve first event_price 100.7: {gain}")
+    assert_true(timestamp_value(gain["event_timestamp"]) == timestamp_value(t1), f"GAIN_3_5_PERCENT should preserve first timestamp {t1}: {gain}")
+    assert_true(numeric(gain.get("actual_price_move_percent")) == 0.7, f"GAIN_3_5_PERCENT should preserve first actual P&L: {gain}")
+    assert_true(numeric(gain.get("leveraged_pnl_percent")) == 3.5, f"GAIN_3_5_PERCENT should preserve first leveraged P&L: {gain}")
+
+    assert_no_duplicate_event(state, "POST_SL_MAX_GAIN")
+    post_sl_max = assert_event_exists(state, "POST_SL_MAX_GAIN")
+    assert_true(numeric(post_sl_max.get("leveraged_pnl_percent")) == 8, f"Higher POST_SL_MAX_GAIN should replace 5% with 8%: {post_sl_max}")
+    assert_true(numeric(post_sl_max.get("event_price")) == 101.6, f"POST_SL_MAX_GAIN should retain the higher-gain event payload: {post_sl_max}")
+    assert_true(timestamp_value(post_sl_max["event_timestamp"]) == timestamp_value(t3), f"POST_SL_MAX_GAIN should use higher-gain timestamp {t3}: {post_sl_max}")
 
 
 def scenario_market_snapshot(client: LaravelApiClient, signal: dict) -> None:
