@@ -100,6 +100,8 @@ class RunLocalEndToEndTest extends Command
             ['name' => 'G_POST_SL_COMPLETION', 'symbol' => 'E2ECOMPLETEUSDT', 'precreate_tracking_trade' => true] + $baseLong,
             ['name' => 'H_IDEMPOTENCY', 'symbol' => 'E2EIDEMPUSDT'] + $baseLong,
             ['name' => 'I_MARKET_SNAPSHOT', 'symbol' => 'E2ESNAPSHOTUSDT'] + $baseLong,
+            ['name' => 'J_DYNAMIC_FINAL_TP_TP2_ONLY', 'symbol' => 'E2ETP2ONLYUSDT', 'tp3' => null, 'tp4' => null] + $baseLong,
+            ['name' => 'K_DYNAMIC_FINAL_TP_TP1_ONLY', 'symbol' => 'E2ETP1ONLYUSDT', 'tp2' => null, 'tp3' => null, 'tp4' => null] + $baseLong,
         ];
     }
 

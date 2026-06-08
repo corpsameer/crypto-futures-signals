@@ -324,7 +324,9 @@ class MonitorApiController extends Controller
 
             [$event, $message, $eventCreated] = $this->storeIdempotentTradeEvent($simulatedTrade, $eventType, $eventPayload);
 
-            if ($eventCreated) {
+            if ($this->isFinalTpEvent($simulatedTrade, $eventType)) {
+                $this->closeTradeAfterFinalTp($simulatedTrade, $event);
+            } elseif ($eventCreated) {
                 $this->applyEventStatus($simulatedTrade, $eventType, $validated['event_price'], $eventTimestamp);
             }
 
@@ -673,6 +675,62 @@ class MonitorApiController extends Controller
         ]));
 
         return [$event, 'Trade event stored successfully.', true];
+    }
+
+    private function isFinalTpEvent(SimulatedTrade $simulatedTrade, string $eventType): bool
+    {
+        $tradeSignal = $simulatedTrade->tradeSignal;
+
+        return $tradeSignal !== null && $eventType === $this->getFinalTpEventType($tradeSignal);
+    }
+
+    private function getFinalTpEventType(TradeSignal $tradeSignal): ?string
+    {
+        if (! is_null($tradeSignal->tp4)) {
+            return TradeTrackingEvent::EVENT_TP4_HIT;
+        }
+
+        if (! is_null($tradeSignal->tp3)) {
+            return TradeTrackingEvent::EVENT_TP3_HIT;
+        }
+
+        if (! is_null($tradeSignal->tp2)) {
+            return TradeTrackingEvent::EVENT_TP2_HIT;
+        }
+
+        if (! is_null($tradeSignal->tp1)) {
+            return TradeTrackingEvent::EVENT_TP1_HIT;
+        }
+
+        return null;
+    }
+
+    private function closeTradeAfterFinalTp(SimulatedTrade $simulatedTrade, TradeTrackingEvent $tpEvent): void
+    {
+        if ($simulatedTrade->isClosed()) {
+            return;
+        }
+
+        $simulatedTrade->update([
+            'status' => SimulatedTrade::STATUS_CLOSED_TP,
+            'exit_price' => $tpEvent->event_price,
+            'exit_reason' => $tpEvent->event_type,
+            'closed_at' => $tpEvent->event_timestamp,
+        ]);
+        $simulatedTrade->tradeSignal?->update(['status' => TradeSignal::STATUS_CLOSED_TP]);
+
+        $this->storeIdempotentTradeEvent(
+            $simulatedTrade,
+            TradeTrackingEvent::EVENT_TRADE_CLOSED,
+            [
+                'trade_signal_id' => $simulatedTrade->trade_signal_id,
+                'event_price' => $tpEvent->event_price,
+                'actual_price_move_percent' => $tpEvent->actual_price_move_percent,
+                'leveraged_pnl_percent' => $tpEvent->leveraged_pnl_percent,
+                'event_timestamp' => $tpEvent->event_timestamp,
+                'notes' => 'Trade closed after final TP hit: '.$tpEvent->event_type,
+            ]
+        );
     }
 
     private function applyEventStatus(SimulatedTrade $simulatedTrade, string $eventType, mixed $eventPrice, Carbon $eventTimestamp): void
