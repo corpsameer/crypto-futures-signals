@@ -21,3 +21,13 @@ __pycache__/
 
 python/logs/
 python/logs/*.log
+
+/bootstrap/cache/*.php
+!/bootstrap/cache/.gitignore
+
+/storage/logs/*.log
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+
+/python/venv/
