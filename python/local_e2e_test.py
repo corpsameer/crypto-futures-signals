@@ -40,6 +40,8 @@ SCENARIO_BY_SYMBOL = {
     "E2ECOMPLETEUSDT": "G_POST_SL_COMPLETION",
     "E2EIDEMPUSDT": "H_IDEMPOTENCY",
     "E2ESNAPSHOTUSDT": "I_MARKET_SNAPSHOT",
+    "E2ETP2ONLYUSDT": "J_DYNAMIC_FINAL_TP_TP2_ONLY",
+    "E2ETP1ONLYUSDT": "K_DYNAMIC_FINAL_TP_TP1_ONLY",
 }
 
 
@@ -210,7 +212,7 @@ def normalize_trade_for_logic(trade_state: dict) -> dict:
                 trade_signal[key] = trade.get(key)
         trade["trade_signal"] = trade_signal
 
-    required = ["id", "symbol", "direction", "leverage", "entry_price", "stop_loss", "tp1", "tp2", "tp3", "tp4"]
+    required = ["id", "symbol", "direction", "leverage", "entry_price", "stop_loss", "tp1"]
     missing = [key for key in required if trade.get(key) in (None, "")]
     assert_true(not missing, f"Normalized trade missing required fields {missing}: {trade}")
 
@@ -342,7 +344,11 @@ def scenario_long_full_tp(client: LaravelApiClient, signal: dict) -> None:
     final_trade = state["trade"]
     assert_true(numeric(final_trade.get("max_gain_percent")) >= 20, f"Expected max_gain_percent >= 20, got {final_trade.get('max_gain_percent')}")
     assert_true(numeric(final_trade.get("max_loss_percent"), 0) <= 0, "Expected max_loss_percent to remain zero or best available minimum")
-    close_trade(client, final_trade, signal, 104, "TP4_HIT", "closed_tp")
+    assert_true(final_trade.get("status") == "closed_tp", f"Trade should close automatically after TP4: {final_trade}")
+    assert_true(final_trade.get("exit_reason") == "TP4_HIT", f"Trade exit_reason should be TP4_HIT: {final_trade}")
+    assert_true((state.get("trade_signal") or {}).get("status") == "closed_tp", f"Signal should be closed_tp: {state.get('trade_signal')}")
+    assert_event_exists(state, "TRADE_CLOSED")
+    assert_no_duplicate_event(state, "TRADE_CLOSED")
 
 
 def scenario_long_sl(client: LaravelApiClient, signal: dict) -> None:
@@ -372,7 +378,11 @@ def scenario_short_full_tp(client: LaravelApiClient, signal: dict) -> None:
     tp1 = assert_event_exists(state, "TP1_HIT")
     assert_true(numeric(tp1.get("actual_price_move_percent")) > 0, "SHORT falling price should have positive actual move")
     assert_true(numeric(tp1.get("leveraged_pnl_percent")) > 0, "SHORT falling price should have positive leveraged P&L")
-    close_trade(client, state["trade"], signal, 96, "TP4_HIT", "closed_tp")
+    assert_true(state["trade"].get("status") == "closed_tp", f"Trade should close automatically after TP4: {state['trade']}")
+    assert_true(state["trade"].get("exit_reason") == "TP4_HIT", f"Trade exit_reason should be TP4_HIT: {state['trade']}")
+    assert_true((state.get("trade_signal") or {}).get("status") == "closed_tp", f"Signal should be closed_tp: {state.get('trade_signal')}")
+    assert_event_exists(state, "TRADE_CLOSED")
+    assert_no_duplicate_event(state, "TRADE_CLOSED")
 
 
 def scenario_short_sl(client: LaravelApiClient, signal: dict) -> None:
@@ -552,6 +562,66 @@ def scenario_idempotency(client: LaravelApiClient, signal: dict) -> None:
     assert_true(timestamp_value(post_sl_max["event_timestamp"]) == timestamp_value(t3), f"POST_SL_MAX_GAIN should use higher-gain timestamp {t3}: {post_sl_max}")
 
 
+def assert_trade_not_active(client: LaravelApiClient, trade_id: int) -> None:
+    active_trades = api_data(call_api("active trades", client.get_active_trades)) or []
+    assert_true(
+        all(trade.get("id") != trade_id for trade in active_trades),
+        f"Closed trade {trade_id} should not appear in active trades: {active_trades}",
+    )
+
+
+def scenario_dynamic_final_tp_tp2_only(client: LaravelApiClient, signal: dict) -> None:
+    trade = trigger_entry_for_signal(client, signal, 100)
+    trade = process_fake_price_step(client, trade, 101, mode="active")
+
+    state = assert_expected_events(client, trade["id"], ["TP1_HIT"])
+    assert_true(state["trade"].get("status") == "active", f"TP1 must not close a TP2-final trade: {state['trade']}")
+    assert_true(not event_exists(state, "TRADE_CLOSED"), "TRADE_CLOSED must not exist before the final TP")
+
+    trade = process_fake_price_step(client, trade, 102, mode="active")
+    state = assert_expected_events(client, trade["id"], ["TP1_HIT", "TP2_HIT", "TRADE_CLOSED"])
+    closed_trade = state["trade"]
+    tp2 = assert_event_exists(state, "TP2_HIT")
+    trade_closed = assert_event_exists(state, "TRADE_CLOSED")
+    assert_true(closed_trade.get("status") == "closed_tp", f"TP2-final trade should be closed_tp: {closed_trade}")
+    assert_true(closed_trade.get("exit_reason") == "TP2_HIT", f"TP2-final trade should exit on TP2_HIT: {closed_trade}")
+    assert_true((state.get("trade_signal") or {}).get("status") == "closed_tp", f"TP2-final signal should be closed_tp: {state.get('trade_signal')}")
+    assert_true(numeric(closed_trade.get("exit_price")) == numeric(tp2.get("event_price")), f"Trade exit_price should use TP2 event: {closed_trade}")
+    assert_true(numeric(trade_closed.get("event_price")) == numeric(tp2.get("event_price")), f"TRADE_CLOSED should copy TP2 price: {trade_closed}")
+    assert_true(timestamp_value(trade_closed["event_timestamp"]) == timestamp_value(tp2["event_timestamp"]), f"TRADE_CLOSED should copy TP2 timestamp: {trade_closed}")
+
+    original_tp2 = dict(tp2)
+    original_closed = dict(trade_closed)
+    store_event(client, trade["id"], {
+        "event_type": "TP2_HIT",
+        "event_price": 999,
+        "actual_price_move_percent": 899,
+        "leveraged_pnl_percent": 4495,
+        "event_timestamp": "2026-06-08T12:00:00+00:00",
+    })
+    state = get_trade_state(client, trade["id"])
+    assert_no_duplicate_event(state, "TP2_HIT")
+    assert_no_duplicate_event(state, "TRADE_CLOSED")
+    tp2 = assert_event_exists(state, "TP2_HIT")
+    trade_closed = assert_event_exists(state, "TRADE_CLOSED")
+    for field in ("event_price", "actual_price_move_percent", "leveraged_pnl_percent", "event_timestamp"):
+        assert_true(str(tp2.get(field)) == str(original_tp2.get(field)), f"Duplicate TP2 must preserve {field}: {tp2}")
+        assert_true(str(trade_closed.get(field)) == str(original_closed.get(field)), f"Duplicate TP2 must preserve TRADE_CLOSED {field}: {trade_closed}")
+    assert_trade_not_active(client, trade["id"])
+
+
+def scenario_dynamic_final_tp_tp1_only(client: LaravelApiClient, signal: dict) -> None:
+    trade = trigger_entry_for_signal(client, signal, 100)
+    trade = process_fake_price_step(client, trade, 101, mode="active")
+
+    state = assert_expected_events(client, trade["id"], ["TP1_HIT", "TRADE_CLOSED"])
+    closed_trade = state["trade"]
+    assert_true(closed_trade.get("status") == "closed_tp", f"TP1-only trade should be closed_tp: {closed_trade}")
+    assert_true(closed_trade.get("exit_reason") == "TP1_HIT", f"TP1-only trade should exit on TP1_HIT: {closed_trade}")
+    assert_true((state.get("trade_signal") or {}).get("status") == "closed_tp", f"TP1-only signal should be closed_tp: {state.get('trade_signal')}")
+    assert_trade_not_active(client, trade["id"])
+
+
 def scenario_market_snapshot(client: LaravelApiClient, signal: dict) -> None:
     trade = trigger_entry_for_signal(client, signal, 100)
     response = call_api(
@@ -589,6 +659,8 @@ SCENARIO_RUNNERS = {
     "G_POST_SL_COMPLETION": scenario_post_sl_completion,
     "H_IDEMPOTENCY": scenario_idempotency,
     "I_MARKET_SNAPSHOT": scenario_market_snapshot,
+    "J_DYNAMIC_FINAL_TP_TP2_ONLY": scenario_dynamic_final_tp_tp2_only,
+    "K_DYNAMIC_FINAL_TP_TP1_ONLY": scenario_dynamic_final_tp_tp1_only,
 }
 
 
