@@ -29,6 +29,7 @@ Route::prefix('cryptofuturesignals')
                 Route::get('/trade-signals/{tradeSignal}', [TradeSignalController::class, 'show'])->name('trade-signals.show');
                 Route::get('/trades', [SimulatedTradeController::class, 'index'])->name('trades.index');
                 Route::get('/strategies', [StrategyController::class, 'index'])->name('strategies.index');
+                Route::get('/strategies/{strategy}', [StrategyController::class, 'show'])->name('strategies.show');
                 Route::get('/traders', [TraderPerformanceController::class, 'index'])->name('traders.index');
                 Route::get('/market-analysis', [MarketAnalysisController::class, 'index'])->name('market-analysis.index');
                 Route::get('/logs', [SystemLogController::class, 'index'])->name('logs.index');
