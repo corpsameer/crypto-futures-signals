@@ -28,6 +28,25 @@
     ];
 
     $formatPercent = fn ($value) => $value === null ? 'N/A' : rtrim(rtrim(number_format((float) $value, 4), '0'), '.').'%';
+    $strategyStatusBadgeClasses = [
+        \App\Models\StrategyTradeResult::RESULT_STATUS_WIN => 'text-bg-success',
+        \App\Models\StrategyTradeResult::RESULT_STATUS_LOSS => 'text-bg-danger',
+        \App\Models\StrategyTradeResult::RESULT_STATUS_OPEN => 'text-bg-info',
+        \App\Models\StrategyTradeResult::RESULT_STATUS_SKIPPED => 'text-bg-secondary',
+    ];
+    $formatStrategyPnl = fn ($value) => $value === null ? '—' : (($value > 0 ? '+' : '').number_format((float) $value, 2).' USDT');
+    $strategyPnlClass = fn ($value) => $value === null ? 'text-muted' : ((float) $value > 0 ? 'text-success' : ((float) $value < 0 ? 'text-danger' : 'text-muted'));
+    $strategyExitLabel = function ($result): string {
+        if ($result?->exit_event_type !== null && $result->exit_event_type !== '') {
+            return $result->exit_event_type;
+        }
+
+        return match ($result?->result_status) {
+            \App\Models\StrategyTradeResult::RESULT_STATUS_OPEN => 'No exit yet',
+            \App\Models\StrategyTradeResult::RESULT_STATUS_SKIPPED => 'No exit',
+            default => 'N/A',
+        };
+    };
 @endphp
 
 @section('title', 'Simulated Trades | Crypto Futures Signal Analyzer')
@@ -117,6 +136,7 @@
                                 <th scope="col">Max Gain %</th>
                                 <th scope="col">Max Loss %</th>
                                 <th scope="col">Final Status</th>
+                                <th scope="col">Strategies</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -189,6 +209,41 @@
                                         </span>
                                         <div class="small text-muted mt-1">
                                             Market: {{ $latestSnapshot?->market_condition ?: 'N/A' }}
+                                        </div>
+                                    </td>
+                                    <td class="text-nowrap">
+                                        <div class="d-flex flex-column gap-2">
+                                            @foreach ($lockedStrategies as $strategyCode => $strategyLabel)
+                                                @php
+                                                    $strategyDefinition = $strategyDefinitions->get($strategyCode);
+                                                    $strategyResult = $strategyResultsByTrade->get($trade->id)?->get($strategyCode);
+                                                    $strategyStatus = $strategyResult?->result_status;
+                                                    $strategyStatusLabel = $strategyStatus === null ? 'NOT PROCESSED' : strtoupper($strategyStatus);
+                                                    $strategyStatusClass = $strategyStatus === null
+                                                        ? 'text-bg-secondary'
+                                                        : ($strategyStatusBadgeClasses[$strategyStatus] ?? 'text-bg-secondary');
+                                                @endphp
+                                                <div>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        @if ($strategyDefinition)
+                                                            <a href="{{ route('cryptofuturesignals.strategies.show', $strategyDefinition) }}" class="small fw-semibold text-decoration-none">
+                                                                {{ $strategyLabel }}
+                                                            </a>
+                                                        @else
+                                                            <span class="small fw-semibold">{{ $strategyLabel }}</span>
+                                                        @endif
+                                                        <span class="badge {{ $strategyStatusClass }}">{{ $strategyStatusLabel }}</span>
+                                                    </div>
+                                                    <div class="small">
+                                                        @if ($strategyResult)
+                                                            <span class="{{ $strategyPnlClass($strategyResult->net_pnl) }}">{{ $formatStrategyPnl($strategyResult->net_pnl) }}</span>
+                                                            <span class="text-muted">· {{ $strategyExitLabel($strategyResult) }}</span>
+                                                        @else
+                                                            <span class="text-muted">— · No result</span>
+                                                        @endif
+                                                    </div>
+                                                </div>
+                                            @endforeach
                                         </div>
                                     </td>
                                 </tr>
