@@ -39,12 +39,11 @@ class StrategyBacktestService
     {
         $incremental = (bool) ($options['incremental'] ?? false);
         $strategies = $this->loadStrategies($options['strategy_code'] ?? null);
-        $trades = $this->loadEligibleTrades($options['from'] ?? null);
 
         $summary = [
             'backtest_run_id' => (int) $run->getKey(),
             'strategies_processed' => 0,
-            'trades_loaded' => $trades->count(),
+            'trades_loaded' => 0,
             'results_created' => 0,
             'results_skipped_as_duplicates' => 0,
             'warnings' => 0,
@@ -52,7 +51,7 @@ class StrategyBacktestService
         ];
 
         foreach ($strategies as $strategy) {
-            $strategySummary = DB::transaction(function () use ($strategy, $run, $options, $incremental, $trades): array {
+            $strategySummary = DB::transaction(function () use ($strategy, $run, $options, $incremental): array {
                 /** @var StrategyDefinition $lockedStrategy */
                 $lockedStrategy = StrategyDefinition::query()
                     ->whereKey($strategy->getKey())
@@ -70,10 +69,10 @@ class StrategyBacktestService
                 $netPnl = self::ZERO_MONEY;
                 $warnings = 0;
 
-                $duplicateTradeIds = $this->duplicateTradeIds($lockedStrategy, $run, $trades, $incremental);
+                $trades = $this->loadEligibleTrades($options['from'] ?? null, $lockedStrategy, $run, $incremental);
 
                 foreach ($trades as $trade) {
-                    if (isset($duplicateTradeIds[(int) $trade->getKey()])) {
+                    if ($this->hasExistingResult($lockedStrategy, $run, $trade, $incremental)) {
                         $duplicates++;
                         continue;
                     }
@@ -133,16 +132,18 @@ class StrategyBacktestService
                     'skipped' => $skipped,
                     'net_pnl' => $netPnl,
                     'warnings' => $warnings,
+                    '_trades_loaded' => $trades->count(),
                     '_results_created' => $created,
                     '_duplicates' => $duplicates,
                 ];
             });
 
             $summary['strategies_processed']++;
+            $summary['trades_loaded'] += $strategySummary['_trades_loaded'];
             $summary['results_created'] += $strategySummary['_results_created'];
             $summary['results_skipped_as_duplicates'] += $strategySummary['_duplicates'];
             $summary['warnings'] += $strategySummary['warnings'];
-            unset($strategySummary['_results_created'], $strategySummary['_duplicates']);
+            unset($strategySummary['_results_created'], $strategySummary['_duplicates'], $strategySummary['_trades_loaded']);
             $summary['strategies'][] = $strategySummary;
         }
 
@@ -166,7 +167,7 @@ class StrategyBacktestService
         return $query->get();
     }
 
-    private function loadEligibleTrades(mixed $from): Collection
+    private function loadEligibleTrades(mixed $from, StrategyDefinition $strategy, StrategyBacktestRun $run, bool $incremental): Collection
     {
         return SimulatedTrade::query()
             ->with([
@@ -175,26 +176,25 @@ class StrategyBacktestService
             ])
             ->whereNotNull('entry_triggered_at')
             ->when($from !== null, fn ($query) => $query->where('entry_triggered_at', '>=', $this->date($from)))
+            ->whereNotExists(function ($query) use ($strategy, $run, $incremental): void {
+                $query->selectRaw('1')
+                    ->from('strategy_trade_results')
+                    ->whereColumn('strategy_trade_results.simulated_trade_id', 'simulated_trades.id')
+                    ->where('strategy_trade_results.strategy_definition_id', $strategy->getKey())
+                    ->when(! $incremental, fn ($query) => $query->where('strategy_trade_results.strategy_backtest_run_id', $run->getKey()));
+            })
             ->orderBy('entry_triggered_at')
             ->orderBy('id')
             ->get();
     }
 
-    private function duplicateTradeIds(StrategyDefinition $strategy, StrategyBacktestRun $run, Collection $trades, bool $incremental): array
+    private function hasExistingResult(StrategyDefinition $strategy, StrategyBacktestRun $run, SimulatedTrade $trade, bool $incremental): bool
     {
-        $tradeIds = $trades->modelKeys();
-
-        if ($tradeIds === []) {
-            return [];
-        }
-
         return StrategyTradeResult::query()
             ->where('strategy_definition_id', $strategy->getKey())
+            ->where('simulated_trade_id', $trade->getKey())
             ->when(! $incremental, fn ($query) => $query->where('strategy_backtest_run_id', $run->getKey()))
-            ->whereIn('simulated_trade_id', $tradeIds)
-            ->pluck('simulated_trade_id')
-            ->mapWithKeys(fn ($id): array => [(int) $id => true])
-            ->all();
+            ->exists();
     }
 
     private function resolveStartingCapital(StrategyDefinition $strategy, StrategyBacktestRun $run, mixed $override, bool $incremental): string
