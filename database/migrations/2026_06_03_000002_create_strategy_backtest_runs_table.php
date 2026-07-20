@@ -13,11 +13,11 @@ return new class extends Migration
     {
         Schema::create('strategy_backtest_runs', function (Blueprint $table): void {
             $table->id();
-            $table->string('name');
+            $table->string('name', 191);
             $table->timestamp('started_at');
             $table->timestamp('completed_at')->nullable();
             $table->decimal('starting_capital', 18, 8)->default(500);
-            $table->string('status')->default('running');
+            $table->string('status', 191)->default('running');
             $table->text('notes')->nullable();
             $table->timestamps();
 

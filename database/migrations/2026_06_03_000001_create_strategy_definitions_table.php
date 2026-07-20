@@ -13,12 +13,12 @@ return new class extends Migration
     {
         Schema::create('strategy_definitions', function (Blueprint $table): void {
             $table->id();
-            $table->string('name');
-            $table->string('code')->unique();
+            $table->string('name', 191);
+            $table->string('code', 191)->unique();
             $table->text('description')->nullable();
-            $table->string('strategy_type');
-            $table->string('target_event_type')->nullable();
-            $table->string('stop_event_type')->nullable();
+            $table->string('strategy_type', 191);
+            $table->string('target_event_type', 191)->nullable();
+            $table->string('stop_event_type', 191)->nullable();
             $table->decimal('allocation_percent', 8, 4);
             $table->decimal('starting_capital', 18, 8)->default(500);
             $table->decimal('current_capital', 18, 8)->default(500);
