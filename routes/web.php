@@ -5,6 +5,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MarketAnalysisController;
 use App\Http\Controllers\PastedSignalController;
 use App\Http\Controllers\SimulatedTradeController;
+use App\Http\Controllers\StrategyController;
 use App\Http\Controllers\SystemLogController;
 use App\Http\Controllers\TradeSignalController;
 use App\Http\Controllers\TraderPerformanceController;
@@ -27,6 +28,7 @@ Route::prefix('cryptofuturesignals')
                 Route::get('/trade-signals', [TradeSignalController::class, 'index'])->name('trade-signals.index');
                 Route::get('/trade-signals/{tradeSignal}', [TradeSignalController::class, 'show'])->name('trade-signals.show');
                 Route::get('/trades', [SimulatedTradeController::class, 'index'])->name('trades.index');
+                Route::get('/strategies', [StrategyController::class, 'index'])->name('strategies.index');
                 Route::get('/traders', [TraderPerformanceController::class, 'index'])->name('traders.index');
                 Route::get('/market-analysis', [MarketAnalysisController::class, 'index'])->name('market-analysis.index');
                 Route::get('/logs', [SystemLogController::class, 'index'])->name('logs.index');
