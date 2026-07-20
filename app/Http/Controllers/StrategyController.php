@@ -148,19 +148,36 @@ class StrategyController extends Controller
             fn (StrategyTradeResult $first, StrategyTradeResult $second): int => $first->id <=> $second->id,
         ])->values()->map(function (StrategyTradeResult $result) use (&$capital, &$sequence): array {
             $sequence++;
-            $capital += in_array($result->result_status, [StrategyTradeResult::RESULT_STATUS_WIN, StrategyTradeResult::RESULT_STATUS_LOSS], true)
-                ? (float) ($result->net_pnl ?? 0)
-                : 0.0;
+            $capitalChange = $this->analyticalCapitalChange($result);
+            $capital += $capitalChange;
 
             return [
                 'sequence' => $sequence,
                 'entry_time' => $result->entry_time,
                 'symbol' => $result->symbol,
                 'result_status' => $result->result_status,
-                'net_pnl' => (float) ($result->net_pnl ?? 0),
+                'allocated_capital' => $result->allocated_capital === null ? null : (float) $result->allocated_capital,
+                'pnl_percent' => $result->exit_leveraged_pnl_percent === null ? null : (float) $result->exit_leveraged_pnl_percent,
+                'stored_net_pnl' => (float) ($result->net_pnl ?? 0),
+                'capital_change' => $capitalChange,
                 'analytical_capital' => $capital,
             ];
         });
+    }
+
+    private function analyticalCapitalChange(StrategyTradeResult $result): float
+    {
+        if ($result->result_status === StrategyTradeResult::RESULT_STATUS_LOSS) {
+            $netPnl = (float) ($result->net_pnl ?? 0);
+
+            return $netPnl < 0 ? $netPnl : -1 * (float) ($result->allocated_capital ?? 0);
+        }
+
+        if ($result->result_status === StrategyTradeResult::RESULT_STATUS_WIN) {
+            return (float) ($result->net_pnl ?? 0);
+        }
+
+        return 0.0;
     }
 
     private function buildPostSlAnalytics(Collection $results): array
@@ -270,9 +287,7 @@ class StrategyController extends Controller
                 fn (StrategyTradeResult $first, StrategyTradeResult $second): int => $first->id <=> $second->id,
             ])
             ->each(function (StrategyTradeResult $result) use (&$equity, &$peak, &$maxAmount, &$maxPercent): void {
-                if (in_array($result->result_status, [StrategyTradeResult::RESULT_STATUS_WIN, StrategyTradeResult::RESULT_STATUS_LOSS], true)) {
-                    $equity += (float) ($result->net_pnl ?? 0);
-                }
+                $equity += $this->analyticalCapitalChange($result);
 
                 $peak = max($peak, $equity);
                 $drawdownAmount = max(0.0, $peak - $equity);
