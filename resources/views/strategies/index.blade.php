@@ -74,7 +74,8 @@
                             </div>
                             <div class="text-lg-end">
                                 <div class="text-muted small text-uppercase fw-semibold">Allocation</div>
-                                <div class="h5 mb-0">{{ $formatPercent($summary['allocation_percent']) }}</div>
+                                <div class="h5 mb-2">{{ $formatPercent($summary['allocation_percent']) }}</div>
+                                <a href="{{ route('cryptofuturesignals.strategies.show', $strategy) }}" class="btn btn-sm btn-outline-primary">View details</a>
                             </div>
                         </div>
 
