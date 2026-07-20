@@ -11,6 +11,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class StrategyBacktestService
@@ -46,6 +47,7 @@ class StrategyBacktestService
             'trades_loaded' => $trades->count(),
             'results_created' => 0,
             'results_skipped_as_duplicates' => 0,
+            'warnings' => 0,
             'strategies' => [],
         ];
 
@@ -66,6 +68,7 @@ class StrategyBacktestService
                 $open = 0;
                 $skipped = 0;
                 $netPnl = self::ZERO_MONEY;
+                $warnings = 0;
 
                 $duplicateTradeIds = $this->duplicateTradeIds($lockedStrategy, $run, $trades, $incremental);
 
@@ -76,7 +79,19 @@ class StrategyBacktestService
                     }
 
                     $resolved = $this->resolver->resolve($lockedStrategy, $trade, $this->orderedTrackingEvents($trade));
-                    $pnl = $this->calculatePnl($capital, $lockedStrategy->allocation_percent, $resolved);
+                    $pnl = $this->calculatePnl($capital, $lockedStrategy, $resolved);
+
+                    if (($pnl['warning'] ?? null) !== null) {
+                        $warnings++;
+                        Log::warning('Strategy backtest result stored with zero P&L because a closed result lacked usable exit leveraged P&L.', [
+                            'backtest_run_id' => $run->getKey(),
+                            'strategy_definition_id' => $lockedStrategy->getKey(),
+                            'strategy_code' => $lockedStrategy->code,
+                            'simulated_trade_id' => $trade->getKey(),
+                            'result_status' => $resolved['result_status'] ?? null,
+                            'exit_leveraged_pnl_percent' => $resolved['exit_leveraged_pnl_percent'] ?? null,
+                        ]);
+                    }
                     $attributes = $this->resultAttributes($run, $lockedStrategy, $trade, $resolved, $pnl, $capital);
 
                     try {
@@ -117,6 +132,7 @@ class StrategyBacktestService
                     'open' => $open,
                     'skipped' => $skipped,
                     'net_pnl' => $netPnl,
+                    'warnings' => $warnings,
                     '_results_created' => $created,
                     '_duplicates' => $duplicates,
                 ];
@@ -125,6 +141,7 @@ class StrategyBacktestService
             $summary['strategies_processed']++;
             $summary['results_created'] += $strategySummary['_results_created'];
             $summary['results_skipped_as_duplicates'] += $strategySummary['_duplicates'];
+            $summary['warnings'] += $strategySummary['warnings'];
             unset($strategySummary['_results_created'], $strategySummary['_duplicates']);
             $summary['strategies'][] = $strategySummary;
         }
@@ -235,26 +252,26 @@ class StrategyBacktestService
         ];
     }
 
-    private function calculatePnl(string $capitalBefore, mixed $allocationPercent, array $resolved): array
+    private function calculatePnl(string $capitalBefore, StrategyDefinition $strategy, array $resolved): array
     {
         $status = $resolved['result_status'] ?? StrategyTradeResult::RESULT_STATUS_SKIPPED;
         $allocatedCapital = $status === StrategyTradeResult::RESULT_STATUS_SKIPPED
             ? self::ZERO_MONEY
-            : $this->money($this->div($this->mul($capitalBefore, $allocationPercent), '100', self::MONEY_SCALE + 4));
+            : $this->money($this->div($this->mul($capitalBefore, $strategy->allocation_percent), '100', self::MONEY_SCALE + 4));
 
-        if (! in_array($status, [StrategyTradeResult::RESULT_STATUS_WIN, StrategyTradeResult::RESULT_STATUS_LOSS], true)
-            || ! is_numeric($resolved['exit_leveraged_pnl_percent'] ?? null)) {
-            return [
-                'allocated_capital' => $allocatedCapital,
-                'gross_pnl' => self::ZERO_MONEY,
-                'fees' => self::ZERO_MONEY,
-                'net_pnl' => self::ZERO_MONEY,
-                'capital_after' => $capitalBefore,
-                'return_percent' => self::ZERO_PERCENT,
-            ];
+        if (! in_array($status, [StrategyTradeResult::RESULT_STATUS_WIN, StrategyTradeResult::RESULT_STATUS_LOSS], true)) {
+            return $this->zeroPnl($allocatedCapital, $capitalBefore);
         }
 
-        $returnPercent = $this->percent($resolved['exit_leveraged_pnl_percent']);
+        if (! is_numeric($resolved['exit_leveraged_pnl_percent'] ?? null)) {
+            return $this->zeroPnl(
+                $allocatedCapital,
+                $capitalBefore,
+                'closed_result_missing_exit_leveraged_pnl_percent'
+            );
+        }
+
+        $returnPercent = $this->effectiveReturnPercent($strategy, $resolved['exit_leveraged_pnl_percent']);
         $grossPnl = $this->money($this->div($this->mul($allocatedCapital, $returnPercent), '100', self::MONEY_SCALE + 4));
         $netPnl = $grossPnl;
 
@@ -265,7 +282,35 @@ class StrategyBacktestService
             'net_pnl' => $netPnl,
             'capital_after' => $this->money($this->add($capitalBefore, $netPnl)),
             'return_percent' => $returnPercent,
+            'warning' => null,
         ];
+    }
+
+    private function zeroPnl(string $allocatedCapital, string $capitalBefore, ?string $warning = null): array
+    {
+        return [
+            'allocated_capital' => $allocatedCapital,
+            'gross_pnl' => self::ZERO_MONEY,
+            'fees' => self::ZERO_MONEY,
+            'net_pnl' => self::ZERO_MONEY,
+            'capital_after' => $capitalBefore,
+            'return_percent' => self::ZERO_PERCENT,
+            'warning' => $warning,
+        ];
+    }
+
+    private function effectiveReturnPercent(StrategyDefinition $strategy, mixed $exitLeveragedPnlPercent): string
+    {
+        $returnPercent = $this->percent($exitLeveragedPnlPercent);
+
+        if ($strategy->strategy_type !== 'RECOVERY_HOLD' || ! is_numeric($strategy->loss_cap_percent)) {
+            return $returnPercent;
+        }
+
+        $cap = $this->percent($strategy->loss_cap_percent);
+        $lossFloor = str_starts_with($cap, '-') ? $cap : '-' . $cap;
+
+        return bccomp($returnPercent, $lossFloor, self::PERCENT_SCALE) < 0 ? $lossFloor : $returnPercent;
     }
 
     private function date(mixed $value): CarbonInterface
