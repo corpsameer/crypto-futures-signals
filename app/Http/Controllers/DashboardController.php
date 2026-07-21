@@ -6,22 +6,31 @@ use App\Models\MarketSnapshot;
 use App\Models\SimulatedTrade;
 use App\Models\TradeSignal;
 use App\Models\TradeTrackingEvent;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
 {
-    public function __invoke(): View
+    public function __invoke(Request $request): View
     {
-        return $this->index();
+        return $this->index($request);
     }
 
-    public function index(): View
+    public function index(Request $request): View
     {
         $userId = auth()->id();
+        $source = $this->normalizeSource($request->query('source'));
+        $filters = ['source' => $source];
 
-        $tradeSignalQuery = TradeSignal::query()->where('user_id', $userId);
-        $simulatedTradeQuery = SimulatedTrade::query()->where('user_id', $userId);
+        $tradeSignalQuery = TradeSignal::query()
+            ->where('user_id', $userId)
+            ->when($source !== null, fn ($query) => $query->where('signal_source', $source));
+        $simulatedTradeQuery = SimulatedTrade::query()
+            ->where('user_id', $userId)
+            ->when($source !== null, function ($query) use ($source): void {
+                $query->whereHas('tradeSignal', fn ($query) => $query->where('signal_source', $source));
+            });
 
         $summary = [
             'total_signals' => (clone $tradeSignalQuery)->count(),
@@ -39,21 +48,22 @@ class DashboardController extends Controller
                 ->count(),
             'entry_missed' => (clone $tradeSignalQuery)->where('status', TradeSignal::STATUS_ENTRY_MISSED)->count(),
             'active_trades' => (clone $simulatedTradeQuery)->where('status', SimulatedTrade::STATUS_ACTIVE)->count(),
-            'sl_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_SL_HIT),
-            'tp1_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_TP1_HIT),
-            'tp2_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_TP2_HIT),
-            'tp3_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_TP3_HIT),
-            'tp4_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_TP4_HIT),
-            'gain_3_5_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_GAIN_3_5_PERCENT),
+            'sl_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_SL_HIT, $source),
+            'tp1_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_TP1_HIT, $source),
+            'tp2_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_TP2_HIT, $source),
+            'tp3_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_TP3_HIT, $source),
+            'tp4_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_TP4_HIT, $source),
+            'gain_3_5_hit' => $this->countTradesWithEvent(TradeTrackingEvent::EVENT_GAIN_3_5_PERCENT, $source),
             'average_max_gain' => (clone $simulatedTradeQuery)->whereNotNull('max_gain_percent')->avg('max_gain_percent'),
             'average_max_loss' => (clone $simulatedTradeQuery)->whereNotNull('max_loss_percent')->avg('max_loss_percent'),
-            'best_trader' => $this->bestTrader($userId),
-            'worst_trader' => $this->worstTrader($userId),
-            'best_market_condition' => $this->bestMarketCondition($userId),
+            'best_trader' => $this->bestTrader($userId, $source),
+            'worst_trader' => $this->worstTrader($userId, $source),
+            'best_market_condition' => $this->bestMarketCondition($userId, $source),
         ];
 
         $recentSignals = TradeSignal::query()
             ->where('user_id', $userId)
+            ->when($source !== null, fn ($query) => $query->where('signal_source', $source))
             ->orderByDesc('signal_time')
             ->orderByDesc('created_at')
             ->limit(5)
@@ -62,6 +72,9 @@ class DashboardController extends Controller
         $recentTrades = SimulatedTrade::query()
             ->with('tradeSignal:id,signal_source,pair')
             ->where('user_id', $userId)
+            ->when($source !== null, function ($query) use ($source): void {
+                $query->whereHas('tradeSignal', fn ($query) => $query->where('signal_source', $source));
+            })
             ->orderByDesc('entry_triggered_at')
             ->orderByDesc('created_at')
             ->limit(5)
@@ -71,25 +84,35 @@ class DashboardController extends Controller
             'summary' => $summary,
             'recentSignals' => $recentSignals,
             'recentTrades' => $recentTrades,
+            'filters' => $filters,
         ]);
     }
 
-    private function countTradesWithEvent(string $eventType): int
+    private function normalizeSource(mixed $source): ?string
+    {
+        return in_array($source, [TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX], true) ? $source : null;
+    }
+
+    private function countTradesWithEvent(string $eventType, ?string $source = null): int
     {
         return TradeTrackingEvent::query()
             ->where('event_type', $eventType)
-            ->whereHas('simulatedTrade', function ($query): void {
-                $query->where('user_id', auth()->id());
+            ->whereHas('simulatedTrade', function ($query) use ($source): void {
+                $query->where('user_id', auth()->id())
+                    ->when($source !== null, function ($query) use ($source): void {
+                        $query->whereHas('tradeSignal', fn ($query) => $query->where('signal_source', $source));
+                    });
             })
             ->distinct('simulated_trade_id')
             ->count('simulated_trade_id');
     }
 
-    private function bestTrader(int|string|null $userId): ?object
+    private function bestTrader(int|string|null $userId, ?string $source = null): ?object
     {
         return SimulatedTrade::query()
             ->join('trade_signals', 'simulated_trades.trade_signal_id', '=', 'trade_signals.id')
             ->where('simulated_trades.user_id', $userId)
+            ->when($source !== null, fn ($query) => $query->where('trade_signals.signal_source', $source))
             ->whereNotNull('simulated_trades.max_gain_percent')
             ->whereNotNull('trade_signals.trader_name')
             ->where('trade_signals.trader_name', '!=', '')
@@ -103,11 +126,12 @@ class DashboardController extends Controller
             ->first();
     }
 
-    private function worstTrader(int|string|null $userId): ?object
+    private function worstTrader(int|string|null $userId, ?string $source = null): ?object
     {
         return SimulatedTrade::query()
             ->join('trade_signals', 'simulated_trades.trade_signal_id', '=', 'trade_signals.id')
             ->where('simulated_trades.user_id', $userId)
+            ->when($source !== null, fn ($query) => $query->where('trade_signals.signal_source', $source))
             ->whereNotNull('simulated_trades.max_loss_percent')
             ->whereNotNull('trade_signals.trader_name')
             ->where('trade_signals.trader_name', '!=', '')
@@ -121,11 +145,13 @@ class DashboardController extends Controller
             ->first();
     }
 
-    private function bestMarketCondition(int|string|null $userId): ?object
+    private function bestMarketCondition(int|string|null $userId, ?string $source = null): ?object
     {
         return SimulatedTrade::query()
             ->join('market_snapshots', 'simulated_trades.id', '=', 'market_snapshots.simulated_trade_id')
+            ->join('trade_signals', 'simulated_trades.trade_signal_id', '=', 'trade_signals.id')
             ->where('simulated_trades.user_id', $userId)
+            ->when($source !== null, fn ($query) => $query->where('trade_signals.signal_source', $source))
             ->where('market_snapshots.snapshot_type', MarketSnapshot::SNAPSHOT_ENTRY_TRIGGERED)
             ->whereIn('market_snapshots.market_condition', [
                 MarketSnapshot::MARKET_CONDITION_BULLISH,

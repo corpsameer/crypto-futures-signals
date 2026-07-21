@@ -78,6 +78,10 @@
                     <input id="trader_name" type="text" name="trader_name" value="{{ $filters['trader_name'] }}" class="form-control" placeholder="Trader name">
                 </div>
                 <div class="col-md-3 col-xl-2">
+                    <label for="source" class="form-label">Source</label>
+                    <x-source-filter-select :selected="$filters['source']" />
+                </div>
+                <div class="col-md-3 col-xl-2">
                     <label for="date_from" class="form-label">Date From</label>
                     <input id="date_from" type="date" name="date_from" value="{{ $filters['date_from'] }}" class="form-control">
                 </div>

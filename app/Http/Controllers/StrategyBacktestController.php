@@ -5,29 +5,54 @@ namespace App\Http\Controllers;
 use App\Models\StrategyBacktestRun;
 use App\Models\StrategyDefinition;
 use App\Models\StrategyTradeResult;
+use App\Models\TradeSignal;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class StrategyBacktestController extends Controller
 {
-    public function index(): View
+    private function normalizeSource(mixed $source): ?string
     {
+        return in_array($source, [TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX], true) ? $source : null;
+    }
+
+    public function index(Request $request): View
+    {
+        $source = $this->normalizeSource($request->query('source'));
+        $filters = ['source' => $source];
         $backtestRuns = StrategyBacktestRun::query()
             ->select('strategy_backtest_runs.*')
-            ->withCount('tradeResults as result_rows_count')
-            ->selectSub(function ($query): void {
+            ->withCount(['tradeResults as result_rows_count' => function ($query) use ($source): void {
+                $query->when($source !== null, function ($query) use ($source): void {
+                    $query->whereHas('tradeSignal', fn ($query) => $query->where('signal_source', $source));
+                });
+            }])
+            ->selectSub(function ($query) use ($source): void {
                 $query->from('strategy_trade_results')
                     ->selectRaw('COUNT(DISTINCT strategy_definition_id)')
-                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id');
+                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id')
+                    ->when($source !== null, function ($query) use ($source): void {
+                        $query->join('trade_signals', 'strategy_trade_results.trade_signal_id', '=', 'trade_signals.id')
+                            ->where('trade_signals.signal_source', $source);
+                    });
             }, 'strategies_represented_count')
-            ->selectSub(function ($query): void {
+            ->selectSub(function ($query) use ($source): void {
                 $query->from('strategy_trade_results')
                     ->selectRaw('COUNT(DISTINCT simulated_trade_id)')
-                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id');
+                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id')
+                    ->when($source !== null, function ($query) use ($source): void {
+                        $query->join('trade_signals', 'strategy_trade_results.trade_signal_id', '=', 'trade_signals.id')
+                            ->where('trade_signals.signal_source', $source);
+                    });
             }, 'processed_trades_count')
-            ->selectSub(function ($query): void {
+            ->selectSub(function ($query) use ($source): void {
                 $query->from('strategy_trade_results')
                     ->selectRaw('COALESCE(SUM(net_pnl), 0)')
-                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id');
+                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id')
+                    ->when($source !== null, function ($query) use ($source): void {
+                        $query->join('trade_signals', 'strategy_trade_results.trade_signal_id', '=', 'trade_signals.id')
+                            ->where('trade_signals.signal_source', $source);
+                    });
             }, 'total_net_pnl')
             ->orderByDesc('started_at')
             ->orderByDesc('id')
@@ -36,16 +61,22 @@ class StrategyBacktestController extends Controller
 
         return view('strategy-backtests.index', [
             'backtestRuns' => $backtestRuns,
+            'filters' => $filters,
         ]);
     }
 
-    public function show(StrategyBacktestRun $backtestRun): View
+    public function show(Request $request, StrategyBacktestRun $backtestRun): View
     {
+        $source = $this->normalizeSource($request->query('source'));
+        $filters = ['source' => $source];
         $runId = $backtestRun->getKey();
         $startingCapital = $backtestRun->starting_capital === null ? null : (float) $backtestRun->starting_capital;
 
         $overallRow = StrategyTradeResult::query()
             ->where('strategy_backtest_run_id', $runId)
+            ->when($source !== null, function ($query) use ($source): void {
+                $query->whereHas('tradeSignal', fn ($query) => $query->where('signal_source', $source));
+            })
             ->selectRaw('COUNT(*) as result_rows')
             ->selectRaw('COUNT(DISTINCT strategy_definition_id) as strategies_represented')
             ->selectRaw('COUNT(DISTINCT simulated_trade_id) as processed_trades')
@@ -75,6 +106,9 @@ class StrategyBacktestController extends Controller
 
         $strategyRows = StrategyTradeResult::query()
             ->where('strategy_backtest_run_id', $runId)
+            ->when($source !== null, function ($query) use ($source): void {
+                $query->whereHas('tradeSignal', fn ($query) => $query->where('signal_source', $source));
+            })
             ->select('strategy_definition_id')
             ->selectRaw('COUNT(*) as result_rows')
             ->selectRaw('COUNT(DISTINCT simulated_trade_id) as processed_trades')
@@ -127,6 +161,9 @@ class StrategyBacktestController extends Controller
         $results = StrategyTradeResult::query()
             ->with(['strategyDefinition:id,name,code', 'tradeSignal:id,signal_source'])
             ->where('strategy_backtest_run_id', $runId)
+            ->when($source !== null, function ($query) use ($source): void {
+                $query->whereHas('tradeSignal', fn ($query) => $query->where('signal_source', $source));
+            })
             ->orderByRaw('entry_time IS NULL')
             ->orderBy('entry_time')
             ->orderBy('strategy_definition_id')
@@ -140,6 +177,7 @@ class StrategyBacktestController extends Controller
             'overallSummary' => $overallSummary,
             'strategySummaries' => $strategySummaries,
             'results' => $results,
+            'filters' => $filters,
         ]);
     }
 }

@@ -40,6 +40,7 @@ class MarketAnalysisController extends Controller
             'trader_name' => trim((string) $request->query('trader_name', '')),
             'date_from' => trim((string) $request->query('date_from', '')),
             'date_to' => trim((string) $request->query('date_to', '')),
+            'source' => $this->normalizeSource($request->query('source')),
         ];
 
         if (! in_array($filters['market_condition'], self::AVAILABLE_MARKET_CONDITIONS, true)) {
@@ -67,6 +68,9 @@ class MarketAnalysisController extends Controller
             ->when($filters['symbol'] !== '', fn ($query) => $query->where('symbol', 'like', "%{$filters['symbol']}%"))
             ->when($filters['trader_name'] !== '', function ($query) use ($filters): void {
                 $query->whereHas('tradeSignal', fn ($tradeSignalQuery) => $tradeSignalQuery->where('trader_name', 'like', "%{$filters['trader_name']}%"));
+            })
+            ->when($filters['source'] !== null, function ($query) use ($filters): void {
+                $query->whereHas('tradeSignal', fn ($tradeSignalQuery) => $tradeSignalQuery->where('signal_source', $filters['source']));
             })
             ->when($filters['date_from'] !== '', function ($query) use ($filters): void {
                 $query->where(function ($dateQuery) use ($filters): void {
@@ -123,6 +127,11 @@ class MarketAnalysisController extends Controller
             'availableMarketConditions' => self::AVAILABLE_MARKET_CONDITIONS,
             'availableDirections' => self::AVAILABLE_DIRECTIONS,
         ]);
+    }
+
+    private function normalizeSource(mixed $source): ?string
+    {
+        return in_array($source, [TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX], true) ? $source : null;
     }
 
     private function buildMarketMetrics(Collection $trades, string $marketCondition): array

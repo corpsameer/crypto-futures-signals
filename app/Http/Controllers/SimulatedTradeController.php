@@ -61,6 +61,7 @@ class SimulatedTradeController extends Controller
             'direction' => strtoupper(trim((string) $request->query('direction', ''))),
             'status' => trim((string) $request->query('status', '')),
             'market_condition' => strtolower(trim((string) $request->query('market_condition', ''))),
+            'source' => $this->normalizeSource($request->query('source')),
         ];
 
         foreach (['date_from', 'date_to'] as $dateFilter) {
@@ -117,6 +118,9 @@ class SimulatedTradeController extends Controller
             ->when($filters['trader_name'] !== '', function ($query) use ($filters): void {
                 $query->whereHas('tradeSignal', fn ($query) => $query->where('trader_name', 'like', "%{$filters['trader_name']}%"));
             })
+            ->when($filters['source'] !== null, function ($query) use ($filters): void {
+                $query->whereHas('tradeSignal', fn ($query) => $query->where('signal_source', $filters['source']));
+            })
             ->when($filters['symbol'] !== '', fn ($query) => $query->where('symbol', 'like', "%{$filters['symbol']}%"))
             ->when($filters['direction'] !== '', fn ($query) => $query->where('direction', $filters['direction']))
             ->when($filters['status'] !== '', fn ($query) => $query->where('status', $filters['status']))
@@ -166,5 +170,10 @@ class SimulatedTradeController extends Controller
             'strategyDefinitions' => $strategyDefinitions,
             'strategyResultsByTrade' => $strategyResultsByTrade,
         ]);
+    }
+
+    private function normalizeSource(mixed $source): ?string
+    {
+        return in_array($source, [TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX], true) ? $source : null;
     }
 }

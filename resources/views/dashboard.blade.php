@@ -11,19 +11,20 @@
         $bestTrader = $summary['best_trader'] ?? null;
         $worstTrader = $summary['worst_trader'] ?? null;
         $bestMarketCondition = $summary['best_market_condition'] ?? null;
+        $sourceParams = ($filters['source'] ?? null) ? ['source' => $filters['source']] : [];
 
         $cards = [
             [
                 'label' => 'Total Signals',
                 'value' => $summary['total_signals'],
                 'class' => 'border-secondary',
-                'url' => route('cryptofuturesignals.trade-signals.index'),
+                'url' => route('cryptofuturesignals.trade-signals.index', $sourceParams),
             ],
             [
                 'label' => 'Pending Entry',
                 'value' => $summary['pending_entry'],
                 'class' => 'border-warning',
-                'url' => route('cryptofuturesignals.trade-signals.index', ['status' => 'pending_entry']),
+                'url' => route('cryptofuturesignals.trade-signals.index', array_merge($sourceParams, ['status' => 'pending_entry'])),
             ],
             [
                 'label' => 'Entry Triggered',
@@ -34,49 +35,49 @@
                 'label' => 'Entry Missed',
                 'value' => $summary['entry_missed'],
                 'class' => 'border-warning',
-                'url' => route('cryptofuturesignals.trade-signals.index', ['status' => 'entry_missed']),
+                'url' => route('cryptofuturesignals.trade-signals.index', array_merge($sourceParams, ['status' => 'entry_missed'])),
             ],
             [
                 'label' => 'Active Trades',
                 'value' => $summary['active_trades'],
                 'class' => 'border-secondary',
-                'url' => route('cryptofuturesignals.trades.index', ['status' => 'active']),
+                'url' => route('cryptofuturesignals.trades.index', array_merge($sourceParams, ['status' => 'active'])),
             ],
             [
                 'label' => 'SL Hit',
                 'value' => $summary['sl_hit'],
                 'class' => 'border-danger',
-                'url' => route('cryptofuturesignals.trades.index'),
+                'url' => route('cryptofuturesignals.trades.index', $sourceParams),
             ],
             [
                 'label' => 'TP1 Hit',
                 'value' => $summary['tp1_hit'],
                 'class' => 'border-success',
-                'url' => route('cryptofuturesignals.trades.index'),
+                'url' => route('cryptofuturesignals.trades.index', $sourceParams),
             ],
             [
                 'label' => 'TP2 Hit',
                 'value' => $summary['tp2_hit'],
                 'class' => 'border-success',
-                'url' => route('cryptofuturesignals.trades.index'),
+                'url' => route('cryptofuturesignals.trades.index', $sourceParams),
             ],
             [
                 'label' => 'TP3 Hit',
                 'value' => $summary['tp3_hit'],
                 'class' => 'border-success',
-                'url' => route('cryptofuturesignals.trades.index'),
+                'url' => route('cryptofuturesignals.trades.index', $sourceParams),
             ],
             [
                 'label' => 'TP4 Hit',
                 'value' => $summary['tp4_hit'],
                 'class' => 'border-success',
-                'url' => route('cryptofuturesignals.trades.index'),
+                'url' => route('cryptofuturesignals.trades.index', $sourceParams),
             ],
             [
                 'label' => '3.5% Gain Hit',
                 'value' => $summary['gain_3_5_hit'],
                 'class' => 'border-success',
-                'url' => route('cryptofuturesignals.trades.index'),
+                'url' => route('cryptofuturesignals.trades.index', $sourceParams),
             ],
             [
                 'label' => 'Average Max Gain',
@@ -95,7 +96,7 @@
                     ? 'Avg Max Gain: ' . $formatPercent($bestTrader->avg_max_gain_percent) . ' | Trades: ' . $bestTrader->trade_count
                     : 'No trader performance data yet',
                 'class' => 'border-success',
-                'url' => route('cryptofuturesignals.traders.index'),
+                'url' => route('cryptofuturesignals.traders.index', $sourceParams),
             ],
             [
                 'label' => 'Worst Trader',
@@ -104,7 +105,7 @@
                     ? 'Avg Max Loss: ' . $formatPercent($worstTrader->avg_max_loss_percent) . ' | Trades: ' . $worstTrader->trade_count
                     : 'No trader loss data yet',
                 'class' => 'border-danger',
-                'url' => route('cryptofuturesignals.traders.index'),
+                'url' => route('cryptofuturesignals.traders.index', $sourceParams),
             ],
             [
                 'label' => 'Best Market Condition',
@@ -113,7 +114,7 @@
                     ? 'Avg Max Gain: ' . $formatPercent($bestMarketCondition->avg_max_gain_percent) . ' | Trades: ' . $bestMarketCondition->trade_count
                     : 'No entry market condition data yet',
                 'class' => 'border-secondary',
-                'url' => route('cryptofuturesignals.market-analysis.index'),
+                'url' => route('cryptofuturesignals.market-analysis.index', $sourceParams),
             ],
         ];
     @endphp

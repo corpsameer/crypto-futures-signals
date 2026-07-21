@@ -47,6 +47,10 @@
                     </select>
                 </div>
                 <div class="col-md-2">
+                    <label for="source" class="form-label">Source</label>
+                    <x-source-filter-select :selected="$filters['source']" />
+                </div>
+                <div class="col-md-2">
                     <label for="date_from" class="form-label">Date From</label>
                     <input type="date" name="date_from" id="date_from" value="{{ $filters['date_from'] }}" class="form-control">
                 </div>

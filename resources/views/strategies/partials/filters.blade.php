@@ -48,6 +48,10 @@
                     </select>
                 </div>
             @endforeach
+            <div class="col-6 col-md-3 col-xl-2">
+                <label for="strategy_source" class="form-label">Source</label>
+                <x-source-filter-select id="strategy_source" :selected="$filters['source']" />
+            </div>
             <div class="col-12 d-flex flex-wrap gap-2">
                 <button type="submit" class="btn btn-primary">Apply Filters</button>
                 <a href="{{ $clearUrl }}" class="btn btn-outline-secondary">Clear filters</a>
