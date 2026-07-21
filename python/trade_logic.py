@@ -32,22 +32,35 @@ def normalize_symbol(symbol: str) -> str:
 
 def get_entry_bounds(signal: dict) -> tuple[float | None, float | None]:
     """Return normalized lower/upper entry prices from a signal."""
-    entry_min = _safe_float(signal.get("entry_min"))
-    entry_max = _safe_float(signal.get("entry_max"))
+    entry_min = _safe_float(signal.get("entry_price_min"))
+    entry_max = _safe_float(signal.get("entry_price_max"))
+
+    if entry_min is None:
+        entry_min = _safe_float(signal.get("entry_min"))
+
+    if entry_max is None:
+        entry_max = _safe_float(signal.get("entry_max"))
+
+    entry_price = _safe_float(signal.get("entry_price"))
 
     if entry_min is None and entry_max is None:
-        entry_price = _safe_float(signal.get("entry_price"))
         if entry_price is None:
             return None, None
         return entry_price, entry_price
 
     if entry_min is None:
-        return entry_max, entry_max
+        fallback = entry_price if entry_price is not None else entry_max
+        return fallback, fallback
 
     if entry_max is None:
-        return entry_min, entry_min
+        fallback = entry_price if entry_price is not None else entry_min
+        return fallback, fallback
 
     return min(entry_min, entry_max), max(entry_min, entry_max)
+
+
+def get_entry_type(signal: dict) -> str:
+    return "range" if str(signal.get("entry_type") or "").strip().lower() == "range" else "single"
 
 
 def get_planned_entry_price(signal: dict) -> float | None:
@@ -64,7 +77,7 @@ def get_planned_entry_price(signal: dict) -> float | None:
     return None
 
 
-def should_trigger_entry(signal: dict, current_price: float) -> dict:
+def should_trigger_entry(signal: dict, current_price: float, previous_price: float | None = None) -> dict:
     """Decide whether a pending signal has reached its simulated limit-style entry."""
     direction = _normalize_direction(signal.get("direction"))
     price = _safe_float(current_price)
@@ -94,8 +107,16 @@ def should_trigger_entry(signal: dict, current_price: float) -> dict:
         return result
 
     if lower_entry is None or upper_entry is None:
-        result["reason"] = "Missing valid entry_min, entry_max, or entry_price."
+        result["reason"] = "Missing valid entry range or entry_price."
         return result
+
+    entry_type = get_entry_type(signal)
+    if entry_type == "range" and (_safe_float(signal.get("entry_price_min")) is None or _safe_float(signal.get("entry_price_max")) is None):
+        if _safe_float(signal.get("entry_price")) is None:
+            result["reason"] = "Range signal is missing valid boundaries and has no legacy entry_price fallback."
+            return result
+        entry_type = "single"
+        lower_entry = upper_entry = _safe_float(signal.get("entry_price"))
 
     planned_entry_price = upper_entry if direction == "LONG" else lower_entry
     result["planned_entry_price"] = planned_entry_price
@@ -104,7 +125,23 @@ def should_trigger_entry(signal: dict, current_price: float) -> dict:
         result["reason"] = "Missing or invalid planned entry price."
         return result
 
-    if direction == "LONG":
+    if entry_type == "range":
+        previous = _safe_float(previous_price)
+        inside_range = lower_entry <= price <= upper_entry
+        crossed_range = False
+        if previous is not None:
+            movement_min = min(previous, price)
+            movement_max = max(previous, price)
+            crossed_range = movement_max >= lower_entry and movement_min <= upper_entry
+
+        if not inside_range and not crossed_range:
+            result["reason"] = "waiting_for_range: current price has not entered or crossed the entry range."
+            return result
+
+        entry_trigger_price = price
+        result["triggered"] = True
+        result["reason"] = "entry_triggered: current observed price is inside the entry range." if inside_range else "entry_triggered: poll-to-poll price movement crossed the entry range."
+    elif direction == "LONG":
         if price > upper_entry:
             result["reason"] = "waiting_for_limit_pullback: current price is above the LONG upper entry price."
             return result
@@ -112,7 +149,7 @@ def should_trigger_entry(signal: dict, current_price: float) -> dict:
         entry_trigger_price = price
         result["triggered"] = True
         result["reason"] = "entry_triggered: current observed price is at or below the LONG upper entry price."
-    else:
+    elif direction == "SHORT":
         if price < lower_entry:
             result["reason"] = "waiting_for_limit_retest: current price is below the SHORT lower entry price."
             return result

@@ -122,8 +122,10 @@
                 <dt class="col-md-3">Leverage</dt><dd class="col-md-3">{{ $leverageDisplay($tradeSignal->leverage) }}</dd>
                 <dt class="col-md-3">Margin Mode</dt><dd class="col-md-3">{{ $display($tradeSignal->margin_mode) }}</dd>
                 <dt class="col-md-3">Entry Type</dt><dd class="col-md-3">{{ $display($tradeSignal->entry_type) }}</dd>
-                <dt class="col-md-3">Entry Min</dt><dd class="col-md-3">{{ $display($tradeSignal->entry_min) }}</dd>
-                <dt class="col-md-3">Entry Max</dt><dd class="col-md-3">{{ $display($tradeSignal->entry_max) }}</dd>
+                <dt class="col-md-3">Entry Display</dt><dd class="col-md-3">{{ $tradeSignal->entry_display }}</dd>
+                <dt class="col-md-3">Compatibility Entry Price</dt><dd class="col-md-3">{{ $display($tradeSignal->entry_price) }}</dd>
+                <dt class="col-md-3">Entry Min</dt><dd class="col-md-3">{{ $display($tradeSignal->entry_price_min ?? $tradeSignal->entry_min) }}</dd>
+                <dt class="col-md-3">Entry Max</dt><dd class="col-md-3">{{ $display($tradeSignal->entry_price_max ?? $tradeSignal->entry_max) }}</dd>
                 <dt class="col-md-3">Stop Loss</dt><dd class="col-md-3">{{ $display($tradeSignal->stop_loss) }}</dd>
                 <dt class="col-md-3">TP1</dt><dd class="col-md-3">{{ $display($tradeSignal->tp1) }}</dd>
                 <dt class="col-md-3">TP2</dt><dd class="col-md-3">{{ $display($tradeSignal->tp2) }}</dd>

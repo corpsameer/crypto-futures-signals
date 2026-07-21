@@ -146,6 +146,7 @@ class PastedSignalController extends Controller
             'parsedData' => $parsedData,
             'parserWarnings' => isset($parsedPayload['warnings']) && is_array($parsedPayload['warnings']) ? $parsedPayload['warnings'] : [],
             'parserErrors' => isset($parsedPayload['errors']) && is_array($parsedPayload['errors']) ? $parsedPayload['errors'] : [],
+            'parserMeta' => isset($parsedPayload['meta']) && is_array($parsedPayload['meta']) ? $parsedPayload['meta'] : [],
         ]);
     }
 
@@ -184,23 +185,50 @@ class PastedSignalController extends Controller
             'notes' => ['nullable', 'string'],
         ]);
 
-        $validated['signal_source'] = $parsedData['signal_source'] ?? TradeSignal::SOURCE_TELEGRAM;
+        $source = $parsedData['signal_source'] ?? TradeSignal::SOURCE_TELEGRAM;
+        $validated['entry_type'] = in_array($validated['entry_type'] ?? null, ['single', 'range'], true)
+            ? $validated['entry_type']
+            : 'single';
+
+        if ($source === TradeSignal::SOURCE_COINDCX) {
+            $validated['entry_type'] = 'range';
+            $validated['entry_min'] = $parsedData['entry_min'] ?? $validated['entry_min'];
+            $validated['entry_max'] = $parsedData['entry_max'] ?? $validated['entry_max'];
+            $validated['entry_price_min'] = $parsedData['entry_price_min'] ?? $parsedData['entry_min'] ?? $validated['entry_min'];
+            $validated['entry_price_max'] = $parsedData['entry_price_max'] ?? $parsedData['entry_max'] ?? $validated['entry_max'];
+            $validated['entry_price'] = $parsedData['entry_price'] ?? $this->decimalMidpoint((string) $validated['entry_price_min'], (string) $validated['entry_price_max']);
+            $validated['tp2'] = null;
+            $validated['tp3'] = null;
+            $validated['tp4'] = null;
+        }
+
+        $validated['signal_source'] = $source;
         if ($validated['signal_source'] === TradeSignal::SOURCE_COINDCX) {
             $validated['source_image_path'] = null;
         }
 
-        [$validated['entry_min'], $validated['entry_max']] = [
-            min((float) $validated['entry_min'], (float) $validated['entry_max']),
-            max((float) $validated['entry_min'], (float) $validated['entry_max']),
-        ];
+        [$validated['entry_min'], $validated['entry_max']] = $this->normalizeDecimalBounds((string) $validated['entry_min'], (string) $validated['entry_max']);
+        $validated['entry_price_min'] = $validated['entry_price_min'] ?? $validated['entry_min'];
+        $validated['entry_price_max'] = $validated['entry_price_max'] ?? $validated['entry_max'];
+        [$validated['entry_price_min'], $validated['entry_price_max']] = $this->normalizeDecimalBounds((string) $validated['entry_price_min'], (string) $validated['entry_price_max']);
+        $validated['entry_price'] = $validated['entry_price'] ?? $this->decimalMidpoint((string) $validated['entry_price_min'], (string) $validated['entry_price_max']);
+
+        if ($validated['signal_source'] !== TradeSignal::SOURCE_COINDCX) {
+            $validated['entry_type'] = 'single';
+            $validated['entry_price'] = $this->decimalMidpoint((string) $validated['entry_min'], (string) $validated['entry_max']);
+            $validated['entry_price_min'] = $validated['entry_price'];
+            $validated['entry_price_max'] = $validated['entry_price'];
+        }
+
+        $tradeSignalPayload = $this->filterTradeSignalPayloadForExistingColumns(array_merge($validated, [
+            'pasted_signal_id' => $pastedSignal->id,
+            'user_id' => auth()->id(),
+            'status' => TradeSignal::STATUS_PENDING_ENTRY,
+        ]));
 
         $tradeSignal = TradeSignal::updateOrCreate(
             ['pasted_signal_id' => $pastedSignal->id],
-            array_merge($validated, [
-                'pasted_signal_id' => $pastedSignal->id,
-                'user_id' => auth()->id(),
-                'status' => TradeSignal::STATUS_PENDING_ENTRY,
-            ])
+            $tradeSignalPayload
         );
 
         $capturedAt = now();
@@ -250,15 +278,24 @@ class PastedSignalController extends Controller
             ->with('success', 'Structured trade signal saved successfully.');
     }
 
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function filterTradeSignalPayloadForExistingColumns(array $payload): array
+    {
+        $columns = Schema::getColumnListing('trade_signals');
+
+        return array_intersect_key($payload, array_flip($columns));
+    }
+
     /** @param array<string, mixed> $validated */
     private function buildManualCoinDcxParserResult(array $validated): array
     {
         [$symbol, $pair] = $this->normalizeManualCoinDcxSymbol((string) $validated['coindcx_symbol']);
-        $entryOne = (float) $validated['coindcx_entry_price_1'];
-        $entryTwo = (float) $validated['coindcx_entry_price_2'];
-        $entryMin = min($entryOne, $entryTwo);
-        $entryMax = max($entryOne, $entryTwo);
-        $entryMidpoint = $this->normalizeDecimal(($entryMin + $entryMax) / 2);
+        [$entryMin, $entryMax] = $this->normalizeDecimalBounds((string) $validated['coindcx_entry_price_1'], (string) $validated['coindcx_entry_price_2']);
+        $entryMidpoint = $this->decimalMidpoint($entryMin, $entryMax);
 
         return [
             'success' => true,
@@ -269,11 +306,14 @@ class PastedSignalController extends Controller
                 'direction' => $validated['coindcx_direction'],
                 'leverage' => (int) $validated['coindcx_leverage'],
                 'margin_mode' => null,
-                'entry_min' => $entryMidpoint,
-                'entry_max' => $entryMidpoint,
-                'entry_type' => 'single',
-                'stop_loss' => $this->normalizeDecimal((float) $validated['coindcx_stop_loss']),
-                'tp1' => $this->normalizeDecimal((float) $validated['coindcx_take_profit']),
+                'entry_min' => $entryMin,
+                'entry_max' => $entryMax,
+                'entry_type' => 'range',
+                'entry_price' => $entryMidpoint,
+                'entry_price_min' => $entryMin,
+                'entry_price_max' => $entryMax,
+                'stop_loss' => $this->normalizeDecimalString((string) $validated['coindcx_stop_loss']),
+                'tp1' => $this->normalizeDecimalString((string) $validated['coindcx_take_profit']),
                 'tp2' => null,
                 'tp3' => null,
                 'tp4' => null,
@@ -286,10 +326,10 @@ class PastedSignalController extends Controller
             'errors' => [],
             'meta' => [
                 'source' => 'coindcx_manual_entry',
-                'entry_range_min' => $this->normalizeDecimal($entryMin),
-                'entry_range_max' => $this->normalizeDecimal($entryMax),
+                'entry_range_min' => $entryMin,
+                'entry_range_max' => $entryMax,
                 'expected_profit_percent' => $validated['coindcx_expected_profit'] !== null
-                    ? $this->normalizeDecimal((float) $validated['coindcx_expected_profit'])
+                    ? $this->normalizeDecimalString((string) $validated['coindcx_expected_profit'])
                     : null,
             ],
         ];
@@ -298,20 +338,17 @@ class PastedSignalController extends Controller
     /** @param array<string, mixed> $validated */
     private function validateCoinDcxPriceRelationship(array $validated): ?string
     {
-        $entryOne = (float) $validated['coindcx_entry_price_1'];
-        $entryTwo = (float) $validated['coindcx_entry_price_2'];
-        $entryMin = min($entryOne, $entryTwo);
-        $entryMax = max($entryOne, $entryTwo);
-        $stopLoss = (float) $validated['coindcx_stop_loss'];
-        $takeProfit = (float) $validated['coindcx_take_profit'];
+        [$entryMin, $entryMax] = $this->normalizeDecimalBounds((string) $validated['coindcx_entry_price_1'], (string) $validated['coindcx_entry_price_2']);
+        $stopLoss = $this->normalizeDecimalString((string) $validated['coindcx_stop_loss']);
+        $takeProfit = $this->normalizeDecimalString((string) $validated['coindcx_take_profit']);
 
         if ($validated['coindcx_direction'] === TradeSignal::DIRECTION_LONG) {
-            return $stopLoss < $entryMin && $takeProfit > $entryMax
+            return bccomp($stopLoss, $entryMin, 12) === -1 && bccomp($takeProfit, $entryMax, 12) === 1
                 ? null
                 : 'For a LONG signal, Stop Loss must be below the entry range and Take Profit must be above it.';
         }
 
-        return $stopLoss > $entryMax && $takeProfit < $entryMin
+        return bccomp($stopLoss, $entryMax, 12) === 1 && bccomp($takeProfit, $entryMin, 12) === -1
             ? null
             : 'For a SHORT signal, Stop Loss must be above the entry range and Take Profit must be below it.';
     }
@@ -345,11 +382,42 @@ class PastedSignalController extends Controller
         return implode("\n", $lines);
     }
 
-    private function normalizeDecimal(float $value): int|float
+    /** @return array{0: string, 1: string} */
+    private function normalizeDecimalBounds(string $first, string $second): array
     {
-        $normalized = rtrim(rtrim(number_format($value, 12, '.', ''), '0'), '.');
+        $first = $this->normalizeDecimalString($first);
+        $second = $this->normalizeDecimalString($second);
 
-        return str_contains($normalized, '.') ? (float) $normalized : (int) $normalized;
+        return bccomp($first, $second, 12) <= 0 ? [$first, $second] : [$second, $first];
+    }
+
+    private function decimalMidpoint(string $minimum, string $maximum): string
+    {
+        return $this->normalizeDecimalString(bcdiv(bcadd($minimum, $maximum, 12), '2', 12));
+    }
+
+    private function normalizeDecimalString(string $value): string
+    {
+        $value = trim($value);
+
+        if (stripos($value, 'e') !== false) {
+            $value = rtrim(rtrim(sprintf('%.12F', (float) $value), '0'), '.');
+        }
+
+        if (! str_contains($value, '.')) {
+            $integer = ltrim($value, '+');
+            $integer = ltrim($integer, '0');
+
+            return $integer === '' || $integer === '-0' ? '0' : $integer;
+        }
+
+        [$integer, $fraction] = explode('.', ltrim($value, '+'), 2);
+        $integer = ltrim($integer, '0');
+        $fraction = rtrim(substr($fraction, 0, 12), '0');
+
+        $normalized = ($integer === '' || $integer === '-' ? '0' : $integer).($fraction === '' ? '' : '.'.$fraction);
+
+        return $normalized === '-0' ? '0' : $normalized;
     }
 
     private function authorizePastedSignalOwner(PastedSignal $pastedSignal): void

@@ -25,36 +25,84 @@ class MonitorApiController extends Controller
             'symbol' => ['nullable', 'string', 'max:50'],
         ]);
 
+        $selectColumns = $this->existingTradeSignalColumns([
+            'id',
+            'symbol',
+            'pair',
+            'direction',
+            'leverage',
+            'entry_min',
+            'entry_max',
+            'entry_type',
+            'entry_price',
+            'entry_price_min',
+            'entry_price_max',
+            'stop_loss',
+            'tp1',
+            'tp2',
+            'tp3',
+            'tp4',
+            'status',
+            'trader_name',
+            'signal_time',
+            'expires_at',
+            'created_at',
+        ]);
+
         $signals = TradeSignal::query()
-            ->select([
-                'id',
-                'symbol',
-                'pair',
-                'direction',
-                'leverage',
-                'entry_min',
-                'entry_max',
-                'stop_loss',
-                'tp1',
-                'tp2',
-                'tp3',
-                'tp4',
-                'status',
-                'trader_name',
-                'signal_time',
-                'expires_at',
-                'created_at',
-            ])
+            ->select($selectColumns)
             ->where('status', TradeSignal::STATUS_PENDING_ENTRY)
             ->when(! empty($validated['symbol']), fn ($query) => $query->where('symbol', $validated['symbol']))
             ->latest('id')
             ->limit($validated['limit'] ?? 100)
-            ->get();
+            ->get()
+            ->map(function (TradeSignal $signal): array {
+                $entryType = in_array($signal->entry_type, ['single', 'range'], true) ? $signal->entry_type : 'single';
+                $entryPrice = $signal->entry_price ?? $this->midpoint($signal->entry_min, $signal->entry_max);
+                $entryPriceMin = $signal->entry_price_min ?? $signal->entry_min ?? $entryPrice;
+                $entryPriceMax = $signal->entry_price_max ?? $signal->entry_max ?? $entryPrice;
+
+                return array_merge($signal->toArray(), [
+                    'entry_type' => $entryType,
+                    'entry_price' => $entryPrice,
+                    'entry_price_min' => $entryPriceMin,
+                    'entry_price_max' => $entryPriceMax,
+                ]);
+            });
 
         return response()->json([
             'success' => true,
             'data' => $signals,
         ]);
+    }
+
+
+    /**
+     * @param list<string> $columns
+     * @return list<string>
+     */
+    private function existingTradeSignalColumns(array $columns): array
+    {
+        $existingColumns = Schema::getColumnListing('trade_signals');
+
+        return array_values(array_intersect($columns, $existingColumns));
+    }
+
+    private function midpoint(mixed $minimum, mixed $maximum): mixed
+    {
+        if ($minimum === null && $maximum === null) {
+            return null;
+        }
+
+        if ($minimum === null) {
+            return $maximum;
+        }
+
+        if ($maximum === null) {
+            return $minimum;
+        }
+
+        return rtrim(rtrim(bcdiv(bcadd((string) $minimum, (string) $maximum, 12), '2', 12), '0'), '.');
     }
 
     public function markEntryMissed(Request $request): JsonResponse
