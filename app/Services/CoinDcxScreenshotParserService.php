@@ -57,7 +57,21 @@ class CoinDcxScreenshotParserService
         [$data['symbol'], $data['pair']] = $this->parseSymbolAndPair($text);
         $data['direction'] = $this->parseDirection($text);
         $data['leverage'] = $this->parseLeverage($text);
-        $entry = $this->parseEntryRange($text);
+
+        $fallbackText = null;
+        $fallbackRan = false;
+        if ($data['direction'] === null || $data['leverage'] === null) {
+            $fallbackRan = true;
+            $fallbackText = $this->extractDirectionBadgeOcrText($image instanceof UploadedFile ? $image->getRealPath() : $image);
+            if ($fallbackText !== null) {
+                $normalizedFallbackText = $this->normalizeText($fallbackText);
+                $data['direction'] ??= $this->parseDirection($normalizedFallbackText);
+                $data['leverage'] ??= $this->parseLeverage($normalizedFallbackText);
+            }
+        }
+
+        $gridValues = $this->parseCoinDcxGridValues($text);
+        $entry = $this->parseEntryRange($text) ?? $gridValues['entry_range'];
         if ($entry !== null) {
             $data['entry_min'] = $entry['midpoint'];
             $data['entry_max'] = $entry['midpoint'];
@@ -65,22 +79,26 @@ class CoinDcxScreenshotParserService
             $meta['entry_range_min'] = $entry['min'];
             $meta['entry_range_max'] = $entry['max'];
         }
-        $data['stop_loss'] = $this->parseLabeledPrice($text, '(?:stop\s*loss|stoploss|s\s*/\s*l|sl)');
-        $data['tp1'] = $this->parseLabeledPrice($text, '(?:take\s*[- ]?\s*profit|target|tp)');
-        $meta['expected_profit_percent'] = $this->parseExpectedProfit($text);
+        $data['stop_loss'] = $this->parseLabeledPrice($text, '(?:stop\s*loss|stoploss|s\s*/\s*l|sl)') ?? $gridValues['stop_loss'];
+        $data['tp1'] = $this->parseLabeledPrice($text, '(?:take\s*[- ]?\s*profit|target|tp)') ?? $gridValues['take_profit'];
+        $meta['expected_profit_percent'] = $this->parseExpectedProfit($text) ?? $gridValues['expected_profit_percent'];
+        $meta['direction_badge_fallback_ran'] = $fallbackRan;
+        $meta['direction_badge_fallback_recovered_direction'] = $fallbackRan && $data['direction'] !== null;
+        $meta['direction_badge_fallback_recovered_leverage'] = $fallbackRan && $data['leverage'] !== null;
         $data['notes'] = "CoinDCX OCR text:\n".$text;
 
-        foreach ([
-            'Symbol' => $data['symbol'],
-            'Direction' => $data['direction'],
-            'Leverage' => $data['leverage'],
-            'Entry range' => $entry,
-            'Stop loss' => $data['stop_loss'],
-            'Take profit' => $data['tp1'],
-        ] as $field => $value) {
-            if ($value === null) {
-                $errors[] = $field.' not found';
-            }
+        $missingFields = $this->missingRequiredFields($data, $entry);
+        foreach ($missingFields as $field) {
+            $errors[] = 'Could not extract '.str_replace('_', ' ', $field);
+        }
+
+        if ($missingFields !== []) {
+            Log::info('[CFS CoinDCX Parser] Missing required fields', [
+                'missing_fields' => $missingFields,
+                'direction_badge_fallback_ran' => $fallbackRan,
+                'direction_recovered' => $fallbackRan && $data['direction'] !== null,
+                'leverage_recovered' => $fallbackRan && $data['leverage'] !== null,
+            ]);
         }
 
         if ($data['leverage'] !== null && $data['leverage'] <= 0) {
@@ -95,7 +113,7 @@ class CoinDcxScreenshotParserService
             'success' => $errors === [],
             'data' => $data,
             'warnings' => $warnings,
-            'errors' => array_values(array_unique($errors)),
+            'errors' => $errors === [] ? [] : [$this->formatErrors($errors, $missingFields)],
             'meta' => $meta,
         ];
     }
@@ -125,13 +143,13 @@ class CoinDcxScreenshotParserService
         ];
     }
 
-    private function extractOcrText(?string $path): string
+    private function extractOcrText(?string $path, string $pageSegmentationMode = '6'): string
     {
         if ($path === null || $path === '' || ! is_file($path)) {
             throw new \RuntimeException('Uploaded image is not readable.');
         }
 
-        $process = new Process(['tesseract', $path, 'stdout', '--psm', '6']);
+        $process = new Process(['tesseract', $path, 'stdout', '--psm', $pageSegmentationMode]);
         $process->setTimeout(self::OCR_TIMEOUT_SECONDS);
 
         try {
@@ -145,6 +163,154 @@ class CoinDcxScreenshotParserService
         }
 
         return $process->getOutput();
+    }
+
+    private function extractDirectionBadgeOcrText(?string $path): ?string
+    {
+        if ($path === null || $path === '' || ! is_file($path) || ! function_exists('imagecreatefromstring')) {
+            return null;
+        }
+
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'cfs_coindcx_badge_');
+        if ($temporaryPath === false) {
+            return null;
+        }
+        $temporaryPngPath = $temporaryPath.'.png';
+        @unlink($temporaryPath);
+
+        try {
+            $image = @imagecreatefromstring((string) file_get_contents($path));
+            if (! $image) {
+                return null;
+            }
+
+            $width = imagesx($image);
+            $height = imagesy($image);
+            $cropX = (int) round($width * 0.12);
+            $cropY = (int) round($height * 0.08);
+            $cropWidth = (int) round($width * 0.76);
+            $cropHeight = (int) round($height * 0.30);
+            $crop = imagecrop($image, [
+                'x' => $cropX,
+                'y' => $cropY,
+                'width' => $cropWidth,
+                'height' => $cropHeight,
+            ]);
+            imagedestroy($image);
+
+            if (! $crop) {
+                return null;
+            }
+
+            $processed = imagecreatetruecolor(imagesx($crop), imagesy($crop));
+            $black = imagecolorallocate($processed, 0, 0, 0);
+            $white = imagecolorallocate($processed, 255, 255, 255);
+            for ($y = 0; $y < imagesy($crop); $y++) {
+                for ($x = 0; $x < imagesx($crop); $x++) {
+                    $rgb = imagecolorat($crop, $x, $y);
+                    $green = ($rgb >> 8) & 0xFF;
+                    $blue = $rgb & 0xFF;
+                    $channel = max($green, $blue);
+                    imagesetpixel($processed, $x, $y, $channel >= 145 ? $white : $black);
+                }
+            }
+            imagedestroy($crop);
+
+            imagepng($processed, $temporaryPngPath);
+            imagedestroy($processed);
+
+            return $this->extractOcrText($temporaryPngPath, '6');
+        } catch (\Throwable $exception) {
+            Log::info('[CFS CoinDCX Parser] Direction badge OCR fallback failed', [
+                'reason' => $exception->getMessage(),
+            ]);
+
+            return null;
+        } finally {
+            if (is_file($temporaryPngPath)) {
+                @unlink($temporaryPngPath);
+            }
+        }
+    }
+
+    /** @return array{entry_range: array{min: int|float, max: int|float, midpoint: int|float}|null, stop_loss: int|float|null, take_profit: int|float|null, expected_profit_percent: int|float|null} */
+    private function parseCoinDcxGridValues(string $text): array
+    {
+        $values = [
+            'entry_range' => null,
+            'stop_loss' => null,
+            'take_profit' => null,
+            'expected_profit_percent' => null,
+        ];
+        $lines = preg_split('/\n/u', $text) ?: [];
+
+        foreach ($lines as $index => $line) {
+            $nextLine = $lines[$index + 1] ?? '';
+            if (preg_match('/\bstop\s*loss\b.*\btake\s*profit\b/i', $line) === 1) {
+                $numbers = $this->extractNumbers($nextLine);
+                if (count($numbers) >= 2) {
+                    $values['stop_loss'] = $numbers[0];
+                    $values['take_profit'] = $numbers[1];
+                }
+            }
+
+            if (preg_match('/\bentry\s*range\b.*\bexpected\s*profit\b/i', $line) === 1) {
+                $numbers = $this->extractNumbers($nextLine);
+                if (count($numbers) >= 2) {
+                    $min = min($numbers[0], $numbers[1]);
+                    $max = max($numbers[0], $numbers[1]);
+                    $values['entry_range'] = [
+                        'min' => $min,
+                        'max' => $max,
+                        'midpoint' => $this->normalizeDecimal(((float) $min + (float) $max) / 2),
+                    ];
+                }
+
+                if (preg_match('/([+-]?\s*'.$this->numberPattern().')\s*%/u', $nextLine, $matches) === 1) {
+                    $values['expected_profit_percent'] = $this->cleanNumericValue(str_replace(['+', ' '], '', $matches[1]));
+                }
+            }
+        }
+
+        return $values;
+    }
+
+    /** @return array<int, string> */
+    private function missingRequiredFields(array $data, ?array $entry): array
+    {
+        $fields = [];
+        foreach ([
+            'symbol' => $data['symbol'],
+            'direction' => $data['direction'],
+            'leverage' => $data['leverage'],
+            'entry_range' => $entry,
+            'stop_loss' => $data['stop_loss'],
+            'take_profit' => $data['tp1'],
+        ] as $field => $value) {
+            if ($value === null) {
+                $fields[] = $field;
+            }
+        }
+
+        return $fields;
+    }
+
+    /** @param array<int, string> $errors @param array<int, string> $missingFields */
+    private function formatErrors(array $errors, array $missingFields): string
+    {
+        if ($missingFields !== []) {
+            return 'Could not extract these required fields from the CoinDCX screenshot: '.implode(', ', array_map(fn (string $field): string => str_replace('_', ' ', $field), $missingFields)).'. Please upload a clearer or uncropped image.';
+        }
+
+        return implode('; ', array_values(array_unique($errors)));
+    }
+
+    /** @return array<int, int|float> */
+    private function extractNumbers(string $text): array
+    {
+        preg_match_all('/'.$this->numberPattern().'/u', $text, $matches);
+
+        return array_map(fn (string $number): int|float => $this->cleanNumericValue($number), $matches[0]);
     }
 
     private function normalizeText(string $text): string
@@ -161,7 +327,7 @@ class CoinDcxScreenshotParserService
     /** @return array{0: string|null, 1: string|null} */
     private function parseSymbolAndPair(string $text): array
     {
-        if (preg_match('/\b([A-Z0-9]{2,15})\s*(?:\/|\-|_|\s)?\s*USDT\b/i', $text, $matches) !== 1) {
+        if (preg_match('/\b([A-Z0-9]{2,15})\s*(?:\/|:|·|•|\-|_|\s)\s*USDT\b/i', $text, $matches) !== 1) {
             return [null, null];
         }
 
@@ -175,7 +341,7 @@ class CoinDcxScreenshotParserService
 
     private function parseDirection(string $text): ?string
     {
-        if (preg_match('/\b(long|short)\b/i', $text, $matches) !== 1) {
+        if (preg_match('/(?:^|\b)(long|short)\s*(?=\d|x|\b)/i', $text, $matches) !== 1) {
             return null;
         }
 
@@ -184,7 +350,11 @@ class CoinDcxScreenshotParserService
 
     private function parseLeverage(string $text): int|float|null
     {
-        if (preg_match('/\b(?:leverage|lev)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*x\b/i', $text, $matches) !== 1) {
+        if (preg_match('/\b(?:long|short)\s*(\d+(?:\.\d+)?)\s*x\b/i', $text, $matches) === 1) {
+            return $this->cleanNumericValue($matches[1]);
+        }
+
+        if (preg_match('/(?:^|\b)(?:leverage|lev)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*x\b/i', $text, $matches) !== 1) {
             return null;
         }
 
@@ -213,20 +383,24 @@ class CoinDcxScreenshotParserService
 
     private function parseLabeledPrice(string $text, string $labelPattern): int|float|null
     {
-        if (preg_match('/\b'.$labelPattern.'\b\s*[:\-]?\s*\$?\s*('.$this->numberPattern().')/iu', $text, $matches) !== 1) {
-            return null;
+        foreach (preg_split('/\n/u', $text) ?: [] as $line) {
+            if (preg_match('~\b'.$labelPattern.'\b\s*[:\-]?\s*\$?\s*('.$this->numberPattern().')~iu', $line, $matches) === 1) {
+                return $this->cleanNumericValue($matches[1]);
+            }
         }
 
-        return $this->cleanNumericValue($matches[1]);
+        return null;
     }
 
     private function parseExpectedProfit(string $text): int|float|null
     {
-        if (preg_match('/\bexpected\s*profit\b\s*[:\-]?\s*('.$this->numberPattern().')\s*%?/iu', $text, $matches) !== 1) {
-            return null;
+        foreach (preg_split('/\n/u', $text) ?: [] as $line) {
+            if (preg_match('/\bexpected\s*profit\b\s*[:\-]?\s*([+-]?\s*'.$this->numberPattern().')\s*%/iu', $line, $matches) === 1) {
+                return $this->cleanNumericValue(str_replace(['+', ' '], '', $matches[1]));
+            }
         }
 
-        return $this->cleanNumericValue($matches[1]);
+        return null;
     }
 
     /** @return array<int, string> */
