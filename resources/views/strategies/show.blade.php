@@ -24,6 +24,7 @@
         </div>
         <div class="d-flex flex-wrap gap-2 align-items-start">
             <span class="badge fs-6 {{ $strategy->is_active ? 'text-bg-success' : 'text-bg-secondary' }}">{{ $strategy->is_active ? 'Active' : 'Inactive' }}</span>
+            <a href="{{ route('cryptofuturesignals.strategies.edit', $strategy) }}" class="btn btn-primary">Edit</a>
             <a href="{{ route('cryptofuturesignals.trades.index') }}" class="btn btn-outline-primary">Simulated Trades</a>
         </div>
     </div>

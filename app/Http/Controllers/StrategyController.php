@@ -6,6 +6,7 @@ use App\Models\StrategyDefinition;
 use App\Models\StrategyTradeResult;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
@@ -52,6 +53,40 @@ class StrategyController extends Controller
             'filterOptions' => $filterOptions,
             'filtersActive' => $filtersActive,
         ]);
+    }
+
+    public function edit(StrategyDefinition $strategy): View
+    {
+        return view('strategies.edit', [
+            'strategy' => $strategy,
+        ]);
+    }
+
+    public function update(Request $request, StrategyDefinition $strategy): RedirectResponse
+    {
+        $request->merge([
+            'name' => trim((string) $request->input('name', '')),
+            'description' => filled($request->input('description')) ? trim((string) $request->input('description')) : null,
+            'is_active' => $request->boolean('is_active'),
+        ]);
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:191'],
+            'description' => ['nullable', 'string'],
+            'allocation_percent' => ['required', 'numeric', 'gt:0', 'lte:100'],
+            'is_active' => ['boolean'],
+        ]);
+
+        $strategy->update([
+            'name' => $validated['name'],
+            'description' => $validated['description'] ?? null,
+            'allocation_percent' => $validated['allocation_percent'],
+            'is_active' => (bool) $validated['is_active'],
+        ]);
+
+        return redirect()
+            ->route('cryptofuturesignals.strategies.show', $strategy)
+            ->with('success', 'Strategy settings updated successfully.');
     }
 
     public function show(Request $request, StrategyDefinition $strategy): View

@@ -48,6 +48,10 @@
     </nav>
 
     <main class="container py-4">
+        @if (session('success'))
+            <div class="alert alert-success">{{ session('success') }}</div>
+        @endif
+
         @yield('content')
     </main>
 
