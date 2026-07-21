@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\MarketSnapshot;
 use App\Models\PastedSignal;
 use App\Models\TradeSignal;
+use App\Services\CoinDcxScreenshotParserService;
 use App\Services\SignalParserService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -33,7 +34,7 @@ class PastedSignalController extends Controller
         return view('signals.create');
     }
 
-    public function store(Request $request, SignalParserService $parser): RedirectResponse
+    public function store(Request $request, SignalParserService $parser, CoinDcxScreenshotParserService $coinDcxParser): RedirectResponse
     {
         $sourceValidated = $request->validate([
             'signal_source' => ['nullable', 'in:'.TradeSignal::SOURCE_TELEGRAM.','.TradeSignal::SOURCE_COINDCX],
@@ -43,24 +44,40 @@ class PastedSignalController extends Controller
         $signalSource = $sourceValidated['signal_source'] ?? TradeSignal::SOURCE_TELEGRAM;
 
         if ($signalSource === TradeSignal::SOURCE_COINDCX) {
-            return back()
-                ->withErrors(['signal_source' => 'CoinDCX screenshot parsing will be enabled in the next task.'])
-                ->withInput();
+            $validated = $request->validate([
+                'trader_name' => ['nullable', 'string', 'max:255'],
+                'source_image' => ['required', 'image', 'mimes:png,jpg,jpeg,webp', 'max:10240'],
+            ]);
+
+            $parserResult = $coinDcxParser->parse($request->file('source_image'));
+            $rawText = $parserResult['data']['notes'] ?? 'CoinDCX Expert Pick screenshot upload';
+        } else {
+            $validated = $request->validate([
+                'trader_name' => ['nullable', 'string', 'max:255'],
+                'raw_text' => ['required', 'string', 'min:10'],
+            ]);
+
+            $parserResult = $parser->parse($validated['raw_text']);
+            $rawText = $validated['raw_text'];
         }
 
-        $validated = $request->validate([
-            'trader_name' => ['nullable', 'string', 'max:255'],
-            'raw_text' => ['required', 'string', 'min:10'],
-        ]);
+        if (isset($parserResult['data']) && is_array($parserResult['data'])) {
+            $parserResult['data']['signal_source'] = $signalSource;
+        }
 
-        $parserResult = $parser->parse($validated['raw_text']);
+        if ($signalSource === TradeSignal::SOURCE_COINDCX && ! $parserResult['success']) {
+            return back()
+                ->withErrors(['source_image' => implode('; ', $parserResult['errors'] ?? ['Could not parse the CoinDCX screenshot.'])])
+                ->withInput($request->except('source_image'));
+        }
+
         $parsedTraderName = $parserResult['data']['trader_name'] ?? null;
         $traderName = $validated['trader_name'] ?? $parsedTraderName;
 
         $pastedSignal = PastedSignal::create([
             'user_id' => auth()->id(),
             'trader_name' => $traderName,
-            'raw_text' => $validated['raw_text'],
+            'raw_text' => $rawText,
             'parsed_payload' => $parserResult,
             'parse_status' => $parserResult['success']
                 ? PastedSignal::PARSE_STATUS_PARSED
@@ -73,7 +90,7 @@ class PastedSignalController extends Controller
         if (! $parserResult['success']) {
             Log::warning('[CFS Parser] Parse failed pasted_signal_id='.$pastedSignal->id, [
                 'errors' => $parserResult['errors'] ?? [],
-                'raw_preview' => substr($validated['raw_text'], 0, 200),
+                'raw_preview' => substr($rawText, 0, 200),
             ]);
         } elseif (! empty($parserResult['warnings'])) {
             Log::info('[CFS Parser] Parse succeeded with warnings pasted_signal_id='.$pastedSignal->id, [
@@ -113,6 +130,9 @@ class PastedSignalController extends Controller
     {
         $this->authorizePastedSignalOwner($pastedSignal);
 
+        $parsedPayload = is_array($pastedSignal->parsed_payload) ? $pastedSignal->parsed_payload : [];
+        $parsedData = isset($parsedPayload['data']) && is_array($parsedPayload['data']) ? $parsedPayload['data'] : [];
+
         $request->merge([
             'symbol' => strtoupper(str_replace([' ', '/'], '', (string) $request->input('symbol'))),
             'pair' => $request->filled('pair') ? strtoupper((string) $request->input('pair')) : null,
@@ -140,6 +160,8 @@ class PastedSignalController extends Controller
             'expires_at' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
         ]);
+
+        $validated['signal_source'] = $parsedData['signal_source'] ?? TradeSignal::SOURCE_TELEGRAM;
 
         [$validated['entry_min'], $validated['entry_max']] = [
             min((float) $validated['entry_min'], (float) $validated['entry_max']),
@@ -182,8 +204,6 @@ class PastedSignalController extends Controller
             ],
             $marketSnapshotPayload
         );
-
-        $parsedPayload = is_array($pastedSignal->parsed_payload) ? $pastedSignal->parsed_payload : [];
 
         $pastedSignal->update([
             'trader_name' => $validated['trader_name'] ?? null,

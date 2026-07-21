@@ -11,7 +11,7 @@
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
         <div>
             <h1 class="h3 mb-1">Paste Signal</h1>
-            <p class="text-muted mb-0">Save a raw Telegram crypto futures signal for parsing in the next step.</p>
+            <p class="text-muted mb-0">Save a Telegram crypto futures signal or CoinDCX Expert Pick screenshot for parsing in the next step.</p>
         </div>
         <a href="{{ route('cryptofuturesignals.signals.index') }}" class="btn btn-outline-secondary">Back to Signals</a>
     </div>
@@ -88,14 +88,10 @@
                         class="form-control @error('source_image') is-invalid @enderror"
                         disabled
                     >
-                    <div class="form-text">Upload a CoinDCX Expert Pick screenshot. CoinDCX screenshot parsing will be enabled in the next task.</div>
+                    <div class="form-text">Upload a CoinDCX Expert Pick screenshot as PNG, JPEG, or WebP (max 10 MB).</div>
                     @error('source_image')
                         <div class="invalid-feedback">{{ $message }}</div>
                     @enderror
-                </div>
-
-                <div class="alert alert-info d-none" id="coindcx-disabled-message" role="alert">
-                    CoinDCX screenshot parsing will be enabled in the next task.
                 </div>
 
                 <div class="d-flex flex-column flex-sm-row gap-2">
@@ -113,8 +109,6 @@
             const coindcxSection = document.getElementById('coindcx-screenshot-section');
             const rawText = document.getElementById('raw_text');
             const sourceImage = document.getElementById('source_image');
-            const submitButton = document.getElementById('paste-signal-submit');
-            const coindcxMessage = document.getElementById('coindcx-disabled-message');
             const telegramSource = '{{ \App\Models\TradeSignal::SOURCE_TELEGRAM }}';
             const coindcxSource = '{{ \App\Models\TradeSignal::SOURCE_COINDCX }}';
 
@@ -129,15 +123,12 @@
 
                 telegramSection.classList.toggle('d-none', ! isTelegram);
                 coindcxSection.classList.toggle('d-none', isTelegram);
-                coindcxMessage.classList.toggle('d-none', isTelegram);
 
                 rawText.disabled = ! isTelegram;
                 rawText.required = isTelegram;
 
                 sourceImage.disabled = isTelegram;
                 sourceImage.required = ! isTelegram;
-
-                submitButton.disabled = ! isTelegram;
             }
 
             sourceSelect.addEventListener('change', updateSignalSourceFields);
