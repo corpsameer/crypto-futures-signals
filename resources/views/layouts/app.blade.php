@@ -10,6 +10,8 @@
         .navbar-brand { font-weight: 700; }
         .metric-card { border: 0; box-shadow: 0 0.5rem 1rem rgba(15, 23, 42, 0.08); }
         .metric-value { font-size: 2rem; font-weight: 700; }
+        .pagination svg,
+        nav[role="navigation"] svg { width: 16px; height: 16px; }
     </style>
 </head>
 <body>

@@ -88,6 +88,6 @@
     </div>
 
     @if ($backtestRuns->hasPages())
-        <div class="mt-4">{{ $backtestRuns->links() }}</div>
+        <div class="mt-4">{{ $backtestRuns->withQueryString()->links() }}</div>
     @endif
 @endsection

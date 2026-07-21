@@ -262,7 +262,7 @@
 
     @if ($trades->hasPages())
         <div class="mt-4">
-            {{ $trades->links() }}
+            {{ $trades->withQueryString()->links() }}
         </div>
     @endif
 @endsection
