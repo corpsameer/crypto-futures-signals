@@ -150,34 +150,23 @@ class StrategyRuleResolver
             return $this->openResult($entry, $postSlRecoveryData);
         }
 
-        if ($trade->exit_price !== null) {
-            $pnl = $this->finalExitPnl($trade);
+        $finalExit = $this->resolveRecoveryHoldFinalExit($trade, $entry, $events);
 
-            return $this->result(
-                true,
-                $entry['price'],
-                $entry['time'],
-                $trade->exit_price,
-                $trade->closed_at,
-                self::FINAL_EXIT_EVENT_TYPE,
-                $pnl,
-                $this->isGreaterThanZero($pnl) ? self::RESULT_WIN : self::RESULT_LOSS,
-                $postSlRecoveryData
-            );
+        if ($finalExit === null) {
+            return $this->openResult($entry, $postSlRecoveryData);
         }
 
-        $lastEvent = $events->last();
-
-        if ($lastEvent instanceof TradeTrackingEvent) {
-            return $this->eventExitResult(
-                $entry,
-                $lastEvent,
-                $this->isGreaterThanZero($lastEvent->leveraged_pnl_percent) ? self::RESULT_WIN : self::RESULT_LOSS,
-                $postSlRecoveryData
-            );
-        }
-
-        return $this->openResult($entry, $postSlRecoveryData);
+        return $this->result(
+            true,
+            $entry['price'],
+            $entry['time'],
+            $finalExit['price'],
+            $finalExit['time'],
+            self::FINAL_EXIT_EVENT_TYPE,
+            $finalExit['leveraged_pnl_percent'],
+            $this->isGreaterThanZero($finalExit['leveraged_pnl_percent']) ? self::RESULT_WIN : self::RESULT_LOSS,
+            $postSlRecoveryData
+        );
     }
 
     private function resolvePostSlRecoveryData(StrategyDefinition $strategy, Collection $eventsAfterEntry): array
@@ -243,13 +232,82 @@ class StrategyRuleResolver
         ], true);
     }
 
-    private function finalExitPnl(SimulatedTrade $trade): mixed
+    /**
+     * @return array{price: mixed, time: mixed, leveraged_pnl_percent: string}|null
+     */
+    private function resolveRecoveryHoldFinalExit(SimulatedTrade $trade, array $entry, Collection $events): ?array
     {
-        return match ($trade->exit_reason) {
-            SimulatedTrade::EXIT_REASON_TP => $trade->max_leveraged_pnl_percent,
-            SimulatedTrade::EXIT_REASON_SL => $trade->min_leveraged_pnl_percent,
+        $terminalTime = $trade->closed_at ?? $trade->tracking_until;
+
+        if ($terminalTime === null) {
+            return null;
+        }
+
+        $terminalTimestamp = $this->asTimestamp($terminalTime);
+        if ($terminalTimestamp === null) {
+            return null;
+        }
+
+        $finalEvent = $events
+            ->filter(fn (TradeTrackingEvent $event): bool => $event->event_price !== null
+                && $this->asTimestamp($event->event_timestamp) !== null
+                && $this->asTimestamp($event->event_timestamp) <= $terminalTimestamp
+                && $event->event_type !== TradeTrackingEvent::EVENT_ENTRY_TRIGGERED
+                && $event->event_type !== TradeTrackingEvent::EVENT_SL_HIT)
+            ->last();
+
+        if ($finalEvent instanceof TradeTrackingEvent) {
+            $exitPrice = $finalEvent->event_price;
+            $exitTime = $finalEvent->event_timestamp;
+        } elseif ($trade->exit_price !== null && $trade->exit_reason !== SimulatedTrade::EXIT_REASON_SL) {
+            $exitPrice = $trade->exit_price;
+            $exitTime = $trade->closed_at;
+        } elseif ($trade->current_price !== null && $trade->status !== SimulatedTrade::STATUS_CLOSED_SL) {
+            $exitPrice = $trade->current_price;
+            $exitTime = $terminalTime;
+        } else {
+            return null;
+        }
+
+        $leveragedPnlPercent = $this->calculateLeveragedPnlPercent(
+            $trade,
+            $entry['price'],
+            $exitPrice
+        );
+
+        if ($leveragedPnlPercent === null) {
+            return null;
+        }
+
+        return [
+            'price' => $exitPrice,
+            'time' => $exitTime,
+            'leveraged_pnl_percent' => $leveragedPnlPercent,
+        ];
+    }
+
+    private function calculateLeveragedPnlPercent(SimulatedTrade $trade, mixed $entryPrice, mixed $exitPrice): ?string
+    {
+        if (! is_numeric($entryPrice) || ! is_numeric($exitPrice) || ! is_numeric($trade->leverage)) {
+            return null;
+        }
+
+        if (bccomp((string) $entryPrice, '0', 12) <= 0) {
+            return null;
+        }
+
+        $direction = strtoupper((string) $trade->direction);
+        $priceMove = match ($direction) {
+            'LONG' => bcdiv(bcsub((string) $exitPrice, (string) $entryPrice, 16), (string) $entryPrice, 16),
+            'SHORT' => bcdiv(bcsub((string) $entryPrice, (string) $exitPrice, 16), (string) $entryPrice, 16),
             default => null,
         };
+
+        if ($priceMove === null) {
+            return null;
+        }
+
+        return bcadd(bcmul(bcmul($priceMove, '100', 16), (string) $trade->leverage, 12), '0', 8);
     }
 
     private function eventsAtOrAfter(Collection $events, mixed $entryTime): Collection
