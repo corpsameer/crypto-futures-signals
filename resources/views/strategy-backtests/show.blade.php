@@ -40,6 +40,22 @@
         <div><span class="badge fs-6 {{ $runStatusBadgeClasses[$backtestRun->status] ?? 'text-bg-secondary' }}">{{ strtoupper($na($backtestRun->status, 'unknown')) }}</span></div>
     </div>
 
+
+    <div class="card metric-card mb-4">
+        <div class="card-body">
+            <form method="GET" action="{{ route('strategy-backtests.show', $backtestRun) }}" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="source" class="form-label">Source</label>
+                    <x-source-filter-select :selected="$filters['source']" />
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">Apply Filter</button>
+                    <a href="{{ route('strategy-backtests.show', $backtestRun) }}" class="btn btn-outline-secondary">Clear Filter</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div class="card metric-card mb-4"><div class="card-body">
         <h2 class="h5 mb-3">Backtest Run Details</h2>
         <div class="row g-3">

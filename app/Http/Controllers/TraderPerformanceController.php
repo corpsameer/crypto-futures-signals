@@ -52,6 +52,7 @@ class TraderPerformanceController extends Controller
             'direction' => strtoupper(trim((string) $request->query('direction', ''))),
             'date_from' => trim((string) $request->query('date_from', '')),
             'date_to' => trim((string) $request->query('date_to', '')),
+            'source' => $this->normalizeSource($request->query('source')),
         ];
 
         foreach (['date_from', 'date_to'] as $dateFilter) {
@@ -78,6 +79,7 @@ class TraderPerformanceController extends Controller
             ->when($filters['trader_name'] !== '', fn ($query) => $query->where('trader_name', 'like', "%{$filters['trader_name']}%"))
             ->when($filters['symbol'] !== '', fn ($query) => $query->where('symbol', 'like', "%{$filters['symbol']}%"))
             ->when($filters['direction'] !== '', fn ($query) => $query->where('direction', $filters['direction']))
+            ->when($filters['source'] !== null, fn ($query) => $query->where('signal_source', $filters['source']))
             ->when($filters['date_from'] !== '', function ($query) use ($filters): void {
                 $query->where('created_at', '>=', Carbon::parse($filters['date_from'])->startOfDay());
             })
@@ -108,6 +110,11 @@ class TraderPerformanceController extends Controller
             'filters' => $filters,
             'availableDirections' => self::AVAILABLE_DIRECTIONS,
         ]);
+    }
+
+    private function normalizeSource(mixed $source): ?string
+    {
+        return in_array($source, [TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX], true) ? $source : null;
     }
 
     private function buildTraderMetrics(Collection $signals, string $traderName): array

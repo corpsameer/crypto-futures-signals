@@ -39,6 +39,7 @@ class TradeSignalController extends Controller
             'status' => trim((string) $request->query('status', '')),
             'direction' => trim((string) $request->query('direction', '')),
             'trader_name' => trim((string) $request->query('trader_name', '')),
+            'source' => $this->normalizeSource($request->query('source')),
         ];
 
         $tradeSignals = TradeSignal::query()
@@ -57,6 +58,7 @@ class TradeSignalController extends Controller
             ->when($filters['status'] !== '', fn ($query) => $query->where('status', $filters['status']))
             ->when($filters['direction'] !== '', fn ($query) => $query->where('direction', $filters['direction']))
             ->when($filters['trader_name'] !== '', fn ($query) => $query->where('trader_name', 'like', "%{$filters['trader_name']}%"))
+            ->when($filters['source'] !== null, fn ($query) => $query->where('signal_source', $filters['source']))
             ->orderByDesc('signal_time')
             ->orderByDesc('created_at')
             ->orderByDesc('id')
@@ -69,6 +71,11 @@ class TradeSignalController extends Controller
             'availableStatuses' => self::AVAILABLE_STATUSES,
             'availableDirections' => self::AVAILABLE_DIRECTIONS,
         ]);
+    }
+
+    private function normalizeSource(mixed $source): ?string
+    {
+        return in_array($source, [TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX], true) ? $source : null;
     }
 
     public function show(TradeSignal $tradeSignal): View

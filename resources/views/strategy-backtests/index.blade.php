@@ -34,6 +34,22 @@
         </div>
     </div>
 
+
+    <div class="card metric-card mb-4">
+        <div class="card-body">
+            <form method="GET" action="{{ route('strategy-backtests.index') }}" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="source" class="form-label">Source</label>
+                    <x-source-filter-select :selected="$filters['source']" />
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">Apply Filter</button>
+                    <a href="{{ route('strategy-backtests.index') }}" class="btn btn-outline-secondary">Clear Filter</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div class="card metric-card">
         <div class="card-body p-0">
             @if ($backtestRuns->count() === 0)
@@ -64,7 +80,7 @@
                                 <tr>
                                     <td class="fw-semibold">#{{ $run->id }}</td>
                                     <td>
-                                        <a href="{{ route('strategy-backtests.show', $run) }}" class="fw-semibold text-decoration-none">{{ $run->name }}</a>
+                                        <a href="{{ route('strategy-backtests.show', array_merge([$run], ($filters['source'] ?? null) ? ['source' => $filters['source']] : [])) }}" class="fw-semibold text-decoration-none">{{ $run->name }}</a>
                                         @if (trim((string) $run->notes) !== '')
                                             <div class="small text-muted text-truncate" style="max-width: 24rem;">{{ $run->notes }}</div>
                                         @endif
@@ -77,7 +93,7 @@
                                     <td>{{ number_format((int) $run->processed_trades_count) }}</td>
                                     <td>{{ number_format((int) $run->result_rows_count) }}</td>
                                     <td class="fw-semibold {{ $valueClass($run->total_net_pnl) }}">{{ $formatSignedUsdt($run->total_net_pnl) }}</td>
-                                    <td class="text-end"><a href="{{ route('strategy-backtests.show', $run) }}" class="btn btn-sm btn-outline-primary">View Run</a></td>
+                                    <td class="text-end"><a href="{{ route('strategy-backtests.show', array_merge([$run], ($filters['source'] ?? null) ? ['source' => $filters['source']] : [])) }}" class="btn btn-sm btn-outline-primary">View Run</a></td>
                                 </tr>
                             @endforeach
                         </tbody>

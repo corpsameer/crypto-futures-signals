@@ -66,6 +66,10 @@
                     <label for="trader_name" class="form-label">Trader</label>
                     <input type="text" name="trader_name" id="trader_name" value="{{ $filters['trader_name'] }}" class="form-control" placeholder="Mohan or Sumit">
                 </div>
+                <div class="col-md-2">
+                    <label for="source" class="form-label">Source</label>
+                    <x-source-filter-select :selected="$filters['source']" />
+                </div>
                 <div class="col-md-2 d-flex gap-2">
                     <button type="submit" class="btn btn-primary">Filter</button>
                     <a href="{{ route('cryptofuturesignals.trade-signals.index') }}" class="btn btn-outline-secondary">Clear</a>

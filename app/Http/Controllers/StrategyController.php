@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\StrategyDefinition;
 use App\Models\StrategyTradeResult;
+use App\Models\TradeSignal;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
@@ -138,6 +139,7 @@ class StrategyController extends Controller
             'result_status' => trim((string) $request->query('result_status', '')),
             'exit_event_type' => trim((string) $request->query('exit_event_type', '')),
             'post_sl_recovered' => trim((string) $request->query('post_sl_recovered', '')),
+            'source' => $this->normalizeSource($request->query('source')),
         ];
 
         $request->merge($filters);
@@ -150,6 +152,7 @@ class StrategyController extends Controller
             'result_status' => ['nullable', Rule::in(self::RESULT_STATUSES)],
             'exit_event_type' => ['nullable', 'string', 'max:100', Rule::in(array_keys($filterOptions['exitEvents']))],
             'post_sl_recovered' => ['nullable', Rule::in(['1', '0'])],
+            'source' => ['nullable', Rule::in([TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX])],
         ], [
             'date_from.before_or_equal' => 'The From Date must be on or before the To Date.',
         ]);
@@ -157,9 +160,14 @@ class StrategyController extends Controller
         return $filters;
     }
 
+    private function normalizeSource(mixed $source): ?string
+    {
+        return in_array($source, [TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX], true) ? $source : null;
+    }
+
     private function filtersAreActive(array $filters): bool
     {
-        return collect($filters)->contains(fn (string $value): bool => $value !== '');
+        return collect($filters)->contains(fn ($value): bool => $value !== null && $value !== '');
     }
 
     private function applyFilters(Builder $query, array $filters): Builder
@@ -198,6 +206,10 @@ class StrategyController extends Controller
 
         if ($filters['post_sl_recovered'] !== '') {
             $query->where('strategy_trade_results.post_sl_recovered', $filters['post_sl_recovered'] === '1');
+        }
+
+        if ($filters['source'] !== null) {
+            $query->whereHas('tradeSignal', fn (Builder $query) => $query->where('signal_source', $filters['source']));
         }
 
         return $query;

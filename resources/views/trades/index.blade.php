@@ -100,6 +100,10 @@
                         @endforeach
                     </select>
                 </div>
+                <div class="col-md-2">
+                    <label for="source" class="form-label">Source</label>
+                    <x-source-filter-select :selected="$filters['source']" />
+                </div>
                 <div class="col-md-3">
                     <label for="market_condition" class="form-label">Market condition</label>
                     <select name="market_condition" id="market_condition" class="form-select">
