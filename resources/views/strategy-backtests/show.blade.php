@@ -118,5 +118,5 @@
             </tbody></table></div>
         @endif
     </div></div>
-    @if ($results->hasPages())<div class="mt-4">{{ $results->links() }}</div>@endif
+    @if ($results->hasPages())<div class="mt-4">{{ $results->withQueryString()->links() }}</div>@endif
 @endsection

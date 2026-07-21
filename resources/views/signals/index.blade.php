@@ -92,7 +92,7 @@
 
     @if ($signals->hasPages())
         <div class="mt-4">
-            {{ $signals->links() }}
+            {{ $signals->withQueryString()->links() }}
         </div>
     @endif
 @endsection

@@ -162,7 +162,7 @@
 
     @if ($tradeSignals->hasPages())
         <div class="mt-4">
-            {{ $tradeSignals->links() }}
+            {{ $tradeSignals->withQueryString()->links() }}
         </div>
     @endif
 @endsection
