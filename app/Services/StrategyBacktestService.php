@@ -6,6 +6,7 @@ use App\Models\SimulatedTrade;
 use App\Models\StrategyBacktestRun;
 use App\Models\StrategyDefinition;
 use App\Models\StrategyTradeResult;
+use App\Models\TradeSignal;
 use Carbon\CarbonInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -78,6 +79,11 @@ class StrategyBacktestService
                     }
 
                     $resolved = $this->resolver->resolve($lockedStrategy, $trade, $this->orderedTrackingEvents($trade));
+
+                    if (($resolved['eligible'] ?? false) === false && $trade->tradeSignal?->signal_source === TradeSignal::SOURCE_COINDCX) {
+                        continue;
+                    }
+
                     $pnl = $this->calculatePnl($capital, $lockedStrategy, $resolved);
 
                     if (($pnl['warning'] ?? null) !== null) {
@@ -171,10 +177,17 @@ class StrategyBacktestService
     {
         return SimulatedTrade::query()
             ->with([
-                'tradeSignal:id,trader_name,symbol,direction',
+                'tradeSignal:id,trader_name,signal_source,symbol,direction,stop_loss,tp1,tp2,tp3,tp4',
                 'trackingEvents' => fn ($query) => $query->orderBy('event_timestamp')->orderBy('id'),
             ])
             ->whereNotNull('entry_triggered_at')
+            ->when(! $incremental, function ($query): void {
+                $query->whereHas('tradeSignal', fn ($query) => $query
+                    ->where(fn ($query) => $query
+                        ->whereNull('signal_source')
+                        ->orWhere('signal_source', '')
+                        ->orWhere('signal_source', TradeSignal::SOURCE_TELEGRAM)));
+            })
             ->when($from !== null, fn ($query) => $query->where('entry_triggered_at', '>=', $this->date($from)))
             ->whereNotExists(function ($query) use ($strategy, $run, $incremental): void {
                 $query->selectRaw('1')

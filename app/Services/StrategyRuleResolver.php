@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\SimulatedTrade;
 use App\Models\StrategyDefinition;
+use App\Models\TradeSignal;
 use App\Models\TradeTrackingEvent;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
@@ -37,7 +38,7 @@ class StrategyRuleResolver
     ): array {
         $orderedEvents = $this->normalizeEvents($events);
 
-        if (! $this->isSupportedStrategy($strategy)) {
+        if (! $this->isSupportedStrategy($strategy) || ! $this->isSourceCompatible($strategy, $trade)) {
             return $this->result(false, null, null, null, null, null, null, self::RESULT_SKIPPED);
         }
 
@@ -69,6 +70,35 @@ class StrategyRuleResolver
 
         if ($strategy->strategy_type === self::STRATEGY_RECOVERY_HOLD) {
             return filled($strategy->target_event_type);
+        }
+
+        return false;
+    }
+
+
+    private function isSourceCompatible(StrategyDefinition $strategy, SimulatedTrade $trade): bool
+    {
+        $signal = $trade->tradeSignal;
+
+        if (! $signal instanceof TradeSignal || $signal->signal_source !== TradeSignal::SOURCE_COINDCX) {
+            return true;
+        }
+
+        if ($strategy->strategy_type === self::STRATEGY_TARGET_BEFORE_STOP) {
+            if ($strategy->target_event_type === TradeTrackingEvent::EVENT_TP2_HIT
+                || $strategy->target_event_type === TradeTrackingEvent::EVENT_TP3_HIT
+                || $strategy->target_event_type === TradeTrackingEvent::EVENT_TP4_HIT) {
+                return false;
+            }
+
+            return filled($strategy->target_event_type)
+                && filled($strategy->stop_event_type)
+                && is_numeric($signal->stop_loss);
+        }
+
+        if ($strategy->strategy_type === self::STRATEGY_RECOVERY_HOLD) {
+            return $strategy->target_event_type === TradeTrackingEvent::EVENT_TP1_HIT
+                && is_numeric($signal->tp1);
         }
 
         return false;
