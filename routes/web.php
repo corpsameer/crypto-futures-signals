@@ -5,6 +5,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MarketAnalysisController;
 use App\Http\Controllers\PastedSignalController;
 use App\Http\Controllers\SimulatedTradeController;
+use App\Http\Controllers\StrategyBacktestController;
 use App\Http\Controllers\StrategyController;
 use App\Http\Controllers\SystemLogController;
 use App\Http\Controllers\TradeSignalController;
@@ -34,4 +35,8 @@ Route::prefix('cryptofuturesignals')
                 Route::get('/market-analysis', [MarketAnalysisController::class, 'index'])->name('market-analysis.index');
                 Route::get('/logs', [SystemLogController::class, 'index'])->name('logs.index');
             });
+
+        Route::middleware('auth')
+            ->get('/strategy-backtests/{backtestRun}', [StrategyBacktestController::class, 'show'])
+            ->name('strategy-backtests.show');
     });
