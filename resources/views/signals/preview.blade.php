@@ -11,7 +11,7 @@
     $entryPriceMin = $fieldValue('entry_price_min', $parsedData['entry_min'] ?? null);
     $entryPriceMax = $fieldValue('entry_price_max', $parsedData['entry_max'] ?? null);
     $compatibilityEntryPrice = $fieldValue('entry_price', null);
-    $expectedProfitPercent = $parserMeta['expected_profit_percent'] ?? null;
+    $signalSource = $parsedData['signal_source'] ?? \App\Models\TradeSignal::SOURCE_TELEGRAM;
 @endphp
 
 @section('content')
@@ -92,15 +92,13 @@
                         @csrf
 
                     <div class="alert alert-info" role="status">
+                        <div class="mb-2"><span class="fw-semibold">Source:</span> <x-signal-source-badge :source="$signalSource" /></div>
                         @if ($entryType === 'range')
                             <div><span class="fw-semibold">Entry Type:</span> Range</div>
                             <div><span class="fw-semibold">Entry Range:</span> {{ $entryPriceMin }} – {{ $entryPriceMax }}</div>
                             <div><span class="fw-semibold">Compatibility Midpoint:</span> {{ $compatibilityEntryPrice }}</div>
                         @else
                             <div><span class="fw-semibold">Entry Price:</span> {{ $fieldValue('entry_min') }}</div>
-                        @endif
-                        @if ($expectedProfitPercent !== null)
-                            <div><span class="fw-semibold">Expected Profit (informational only):</span> {{ $expectedProfitPercent }}%</div>
                         @endif
                     </div>
 

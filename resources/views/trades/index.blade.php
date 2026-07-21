@@ -162,6 +162,7 @@
                                             <span class="fw-semibold">{{ $trade->symbol }}</span>
                                         @endif
 
+                                        <div class="mt-1"><x-signal-source-badge :source="$trade->tradeSignal?->signal_source ?? 'unknown'" /></div>
                                         @if ($trade->tradeSignal?->pair)
                                             <div class="small text-muted">{{ $trade->tradeSignal->pair }}</div>
                                         @endif

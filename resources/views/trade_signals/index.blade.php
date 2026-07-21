@@ -103,6 +103,7 @@
                                     <td>{{ $tradeSignal->trader_name ?: 'N/A' }}</td>
                                     <td>
                                         <div class="fw-semibold">{{ $tradeSignal->symbol ?: 'N/A' }}</div>
+                                        <div class="mt-1"><x-signal-source-badge :source="$tradeSignal" /></div>
                                         @if ($tradeSignal->pair)
                                             <div class="small text-muted">{{ $tradeSignal->pair }}</div>
                                         @endif

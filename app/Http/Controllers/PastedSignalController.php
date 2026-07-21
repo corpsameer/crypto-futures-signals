@@ -57,7 +57,6 @@ class PastedSignalController extends Controller
                 'coindcx_entry_price_2' => ['required', 'numeric', 'gt:0'],
                 'coindcx_stop_loss' => ['required', 'numeric', 'gt:0'],
                 'coindcx_take_profit' => ['required', 'numeric', 'gt:0'],
-                'coindcx_expected_profit' => ['nullable', 'numeric', 'min:0'],
             ], [
                 'coindcx_symbol.regex' => 'Enter a CoinDCX symbol such as SOL/USDT or SOLUSDT.',
             ], [
@@ -68,7 +67,6 @@ class PastedSignalController extends Controller
                 'coindcx_entry_price_2' => 'entry price 2',
                 'coindcx_stop_loss' => 'stop loss',
                 'coindcx_take_profit' => 'take profit',
-                'coindcx_expected_profit' => 'expected profit',
             ]);
 
             $relationshipError = $this->validateCoinDcxPriceRelationship($validated);
@@ -328,9 +326,6 @@ class PastedSignalController extends Controller
                 'source' => 'coindcx_manual_entry',
                 'entry_range_min' => $entryMin,
                 'entry_range_max' => $entryMax,
-                'expected_profit_percent' => $validated['coindcx_expected_profit'] !== null
-                    ? $this->normalizeDecimalString((string) $validated['coindcx_expected_profit'])
-                    : null,
             ],
         ];
     }
@@ -374,10 +369,6 @@ class PastedSignalController extends Controller
             'Stop Loss: '.$validated['coindcx_stop_loss'],
             'Take Profit: '.$validated['coindcx_take_profit'],
         ];
-
-        if ($validated['coindcx_expected_profit'] !== null) {
-            $lines[] = 'Expected Profit: '.$validated['coindcx_expected_profit'].'%';
-        }
 
         return implode("\n", $lines);
     }
