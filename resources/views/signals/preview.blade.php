@@ -7,7 +7,11 @@
     $traderName = $fieldValue('trader_name', $pastedSignal->trader_name);
     $exchange = $fieldValue('exchange', 'coindcx');
     $marketType = $fieldValue('market_type', 'futures');
-    $entryType = $fieldValue('entry_type', ($parsedData['entry_min'] ?? null) !== ($parsedData['entry_max'] ?? null) ? 'range' : 'single');
+    $entryType = $fieldValue('entry_type', ($parsedData['entry_price_min'] ?? $parsedData['entry_min'] ?? null) !== ($parsedData['entry_price_max'] ?? $parsedData['entry_max'] ?? null) ? 'range' : 'single');
+    $entryPriceMin = $fieldValue('entry_price_min', $parsedData['entry_min'] ?? null);
+    $entryPriceMax = $fieldValue('entry_price_max', $parsedData['entry_max'] ?? null);
+    $compatibilityEntryPrice = $fieldValue('entry_price', null);
+    $expectedProfitPercent = $parserMeta['expected_profit_percent'] ?? null;
 @endphp
 
 @section('content')
@@ -86,6 +90,19 @@
                 <div class="card-body">
                     <form method="POST" action="{{ route('cryptofuturesignals.signals.confirm', $pastedSignal) }}">
                         @csrf
+
+                    <div class="alert alert-info" role="status">
+                        @if ($entryType === 'range')
+                            <div><span class="fw-semibold">Entry Type:</span> Range</div>
+                            <div><span class="fw-semibold">Entry Range:</span> {{ $entryPriceMin }} – {{ $entryPriceMax }}</div>
+                            <div><span class="fw-semibold">Compatibility Midpoint:</span> {{ $compatibilityEntryPrice }}</div>
+                        @else
+                            <div><span class="fw-semibold">Entry Price:</span> {{ $fieldValue('entry_min') }}</div>
+                        @endif
+                        @if ($expectedProfitPercent !== null)
+                            <div><span class="fw-semibold">Expected Profit (informational only):</span> {{ $expectedProfitPercent }}%</div>
+                        @endif
+                    </div>
 
                         <div class="row g-3">
                             <div class="col-md-6">

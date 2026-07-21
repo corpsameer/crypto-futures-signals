@@ -108,6 +108,7 @@ def run_continuous_monitor(laravel_client: LaravelApiClient, coindcx_client: Coi
                 cache["active_trades"],
                 cache["post_sl_trades"],
                 poll_stats,
+                previous_pending_prices=cache["previous_pending_prices"],
                 mode="continuous",
                 poll_number=poll_count,
             )
@@ -158,6 +159,7 @@ def run_check(laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, m
             cache["active_trades"],
             cache["post_sl_trades"],
             stats,
+            previous_pending_prices=cache["previous_pending_prices"],
             mode=mode,
             poll_number=1,
         )
@@ -175,6 +177,7 @@ def new_trade_cache() -> dict:
         "post_sl_trades": [],
         "last_refresh_success_at": None,
         "last_refresh_error": None,
+        "previous_pending_prices": {},
     }
 
 
@@ -229,6 +232,7 @@ def process_price_poll(
     post_sl_trades: list[dict],
     stats: dict,
     *,
+    previous_pending_prices: dict | None = None,
     mode: str,
     poll_number: int,
 ) -> None:
@@ -276,7 +280,7 @@ def process_price_poll(
     stats["active_prices_missing_count"] = len(collect_trade_symbols(active_trades)) - stats["active_prices_found_count"]
 
     for signal in pending_signals:
-        process_pending_signal(signal, prices, laravel_client, coindcx_client, stats)
+        process_pending_signal(signal, prices, laravel_client, coindcx_client, stats, previous_pending_prices)
 
     for trade in active_trades:
         process_active_trade(trade, prices, laravel_client, coindcx_client, stats)
@@ -344,7 +348,7 @@ def log_run_summary(run_id: str, stats: dict, prefix: str) -> None:
     )
 
 
-def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, stats: dict) -> None:
+def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelApiClient, coindcx_client: CoinDCXClient, stats: dict, previous_pending_prices: dict | None = None) -> None:
     signal_id = signal.get("id")
     symbol = normalize_symbol(signal.get("symbol") or signal.get("pair"))
 
@@ -391,9 +395,10 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
             logger.warning("Price invalid for pending signal %s symbol %s: %s", signal_id, symbol, price_data.get("price"))
             return
 
+        previous_price = previous_pending_prices.get(signal_id) if previous_pending_prices is not None else None
         logger.info("Price found for pending signal %s symbol %s: %s", signal_id, symbol, current_price)
 
-        trigger_result = should_trigger_entry(signal, current_price)
+        trigger_result = should_trigger_entry(signal, current_price, previous_price)
         if not trigger_result.get("triggered"):
             logger.info(
                 "Waiting for entry on signal %s %s: %s",
@@ -401,14 +406,21 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
                 symbol,
                 trigger_result.get("reason"),
             )
+            if previous_pending_prices is not None:
+                previous_pending_prices[signal_id] = current_price
             return
 
         entry_trigger_price = trigger_result["entry_trigger_price"]
         logger.info(
-            "Entry triggered for signal %s %s at observed entry trigger price %s.",
+            "Entry triggered for signal %s %s at observed entry trigger price %s entry_type=%s range=%s-%s previous_price=%s reason=%s.",
             signal_id,
             symbol,
             entry_trigger_price,
+            signal.get("entry_type") or "single",
+            signal.get("entry_price_min") or signal.get("entry_min"),
+            signal.get("entry_price_max") or signal.get("entry_max"),
+            previous_price,
+            trigger_result.get("reason"),
         )
 
         payload = {
@@ -424,6 +436,8 @@ def process_pending_signal(signal: dict, prices: dict, laravel_client: LaravelAp
         try:
             response = laravel_client.entry_triggered(payload)
             stats["entries_triggered_count"] += 1
+            if previous_pending_prices is not None:
+                previous_pending_prices.pop(signal_id, None)
             logger.info("Laravel entry-triggered API succeeded for signal %s: %s", signal_id, summarize_response(response))
         except Exception as exc:
             stats["api_errors_count"] += 1

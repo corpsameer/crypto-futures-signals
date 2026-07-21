@@ -52,6 +52,9 @@ class TradeSignal extends Model
         'entry_min',
         'entry_max',
         'entry_type',
+        'entry_price',
+        'entry_price_min',
+        'entry_price_max',
         'stop_loss',
         'tp1',
         'tp2',
@@ -72,6 +75,9 @@ class TradeSignal extends Model
         'leverage' => 'decimal:2',
         'entry_min' => 'decimal:12',
         'entry_max' => 'decimal:12',
+        'entry_price' => 'decimal:12',
+        'entry_price_min' => 'decimal:12',
+        'entry_price_max' => 'decimal:12',
         'stop_loss' => 'decimal:12',
         'tp1' => 'decimal:12',
         'tp2' => 'decimal:12',
@@ -133,15 +139,19 @@ class TradeSignal extends Model
 
     public function hasEntryRange(): bool
     {
-        return $this->entry_min !== null
-            && $this->entry_max !== null
-            && $this->entry_min != $this->entry_max;
+        return ($this->entry_type === 'range')
+            || ($this->entry_price_min !== null
+                && $this->entry_price_max !== null
+                && $this->entry_price_min != $this->entry_price_max)
+            || ($this->entry_min !== null
+                && $this->entry_max !== null
+                && $this->entry_min != $this->entry_max);
     }
 
     public function getEntryDisplayAttribute(): string
     {
         if ($this->hasEntryRange()) {
-            return $this->entry_min.' - '.$this->entry_max;
+            return ($this->entry_price_min ?? $this->entry_min).' - '.($this->entry_price_max ?? $this->entry_max);
         }
 
         if ($this->entry_min !== null) {

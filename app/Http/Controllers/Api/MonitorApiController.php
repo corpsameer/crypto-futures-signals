@@ -34,6 +34,10 @@ class MonitorApiController extends Controller
                 'leverage',
                 'entry_min',
                 'entry_max',
+                'entry_type',
+                'entry_price',
+                'entry_price_min',
+                'entry_price_max',
                 'stop_loss',
                 'tp1',
                 'tp2',
@@ -49,12 +53,42 @@ class MonitorApiController extends Controller
             ->when(! empty($validated['symbol']), fn ($query) => $query->where('symbol', $validated['symbol']))
             ->latest('id')
             ->limit($validated['limit'] ?? 100)
-            ->get();
+            ->get()
+            ->map(function (TradeSignal $signal): array {
+                $entryType = in_array($signal->entry_type, ['single', 'range'], true) ? $signal->entry_type : 'single';
+                $entryPrice = $signal->entry_price ?? $this->midpoint($signal->entry_min, $signal->entry_max);
+                $entryPriceMin = $signal->entry_price_min ?? $signal->entry_min ?? $entryPrice;
+                $entryPriceMax = $signal->entry_price_max ?? $signal->entry_max ?? $entryPrice;
+
+                return array_merge($signal->toArray(), [
+                    'entry_type' => $entryType,
+                    'entry_price' => $entryPrice,
+                    'entry_price_min' => $entryPriceMin,
+                    'entry_price_max' => $entryPriceMax,
+                ]);
+            });
 
         return response()->json([
             'success' => true,
             'data' => $signals,
         ]);
+    }
+
+    private function midpoint(mixed $minimum, mixed $maximum): mixed
+    {
+        if ($minimum === null && $maximum === null) {
+            return null;
+        }
+
+        if ($minimum === null) {
+            return $maximum;
+        }
+
+        if ($maximum === null) {
+            return $minimum;
+        }
+
+        return rtrim(rtrim(bcdiv(bcadd((string) $minimum, (string) $maximum, 12), '2', 12), '0'), '.');
     }
 
     public function markEntryMissed(Request $request): JsonResponse
