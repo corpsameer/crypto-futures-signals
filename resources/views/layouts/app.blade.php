@@ -27,6 +27,7 @@
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.trade-signals.index') }}">Structured Signals</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.trades.index') }}">Simulated Trades</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.strategies.index') }}">Strategies</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ route('strategy-backtests.index') }}">Backtests</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.traders.index') }}">Trader Performance</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.market-analysis.index') }}">Market Analysis</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('cryptofuturesignals.logs.index') }}">System Logs</a></li>
