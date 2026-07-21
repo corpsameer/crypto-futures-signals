@@ -167,7 +167,7 @@ class StrategyController extends Controller
 
     private function filtersAreActive(array $filters): bool
     {
-        return collect($filters)->contains(fn (string $value): bool => $value !== '');
+        return collect($filters)->contains(fn ($value): bool => $value !== null && $value !== '');
     }
 
     private function applyFilters(Builder $query, array $filters): Builder
