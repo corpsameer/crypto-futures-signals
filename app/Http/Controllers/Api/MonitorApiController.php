@@ -25,30 +25,32 @@ class MonitorApiController extends Controller
             'symbol' => ['nullable', 'string', 'max:50'],
         ]);
 
+        $selectColumns = $this->existingTradeSignalColumns([
+            'id',
+            'symbol',
+            'pair',
+            'direction',
+            'leverage',
+            'entry_min',
+            'entry_max',
+            'entry_type',
+            'entry_price',
+            'entry_price_min',
+            'entry_price_max',
+            'stop_loss',
+            'tp1',
+            'tp2',
+            'tp3',
+            'tp4',
+            'status',
+            'trader_name',
+            'signal_time',
+            'expires_at',
+            'created_at',
+        ]);
+
         $signals = TradeSignal::query()
-            ->select([
-                'id',
-                'symbol',
-                'pair',
-                'direction',
-                'leverage',
-                'entry_min',
-                'entry_max',
-                'entry_type',
-                'entry_price',
-                'entry_price_min',
-                'entry_price_max',
-                'stop_loss',
-                'tp1',
-                'tp2',
-                'tp3',
-                'tp4',
-                'status',
-                'trader_name',
-                'signal_time',
-                'expires_at',
-                'created_at',
-            ])
+            ->select($selectColumns)
             ->where('status', TradeSignal::STATUS_PENDING_ENTRY)
             ->when(! empty($validated['symbol']), fn ($query) => $query->where('symbol', $validated['symbol']))
             ->latest('id')
@@ -72,6 +74,18 @@ class MonitorApiController extends Controller
             'success' => true,
             'data' => $signals,
         ]);
+    }
+
+
+    /**
+     * @param list<string> $columns
+     * @return list<string>
+     */
+    private function existingTradeSignalColumns(array $columns): array
+    {
+        $existingColumns = Schema::getColumnListing('trade_signals');
+
+        return array_values(array_intersect($columns, $existingColumns));
     }
 
     private function midpoint(mixed $minimum, mixed $maximum): mixed

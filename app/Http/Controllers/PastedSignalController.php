@@ -220,13 +220,15 @@ class PastedSignalController extends Controller
             $validated['entry_price_max'] = $validated['entry_price'];
         }
 
+        $tradeSignalPayload = $this->filterTradeSignalPayloadForExistingColumns(array_merge($validated, [
+            'pasted_signal_id' => $pastedSignal->id,
+            'user_id' => auth()->id(),
+            'status' => TradeSignal::STATUS_PENDING_ENTRY,
+        ]));
+
         $tradeSignal = TradeSignal::updateOrCreate(
             ['pasted_signal_id' => $pastedSignal->id],
-            array_merge($validated, [
-                'pasted_signal_id' => $pastedSignal->id,
-                'user_id' => auth()->id(),
-                'status' => TradeSignal::STATUS_PENDING_ENTRY,
-            ])
+            $tradeSignalPayload
         );
 
         $capturedAt = now();
@@ -274,6 +276,18 @@ class PastedSignalController extends Controller
         return redirect()
             ->route('cryptofuturesignals.signals.index')
             ->with('success', 'Structured trade signal saved successfully.');
+    }
+
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function filterTradeSignalPayloadForExistingColumns(array $payload): array
+    {
+        $columns = Schema::getColumnListing('trade_signals');
+
+        return array_intersect_key($payload, array_flip($columns));
     }
 
     /** @param array<string, mixed> $validated */
