@@ -16,6 +16,11 @@ class StrategyBacktestRun extends Model
     public const STATUS_COMPLETED = 'completed';
     public const STATUS_FAILED = 'failed';
 
+    public const SOURCE_SCOPE_TELEGRAM = 'telegram';
+    public const SOURCE_SCOPE_COINDCX = 'coindcx';
+    public const SOURCE_SCOPE_ALL = 'all';
+
+
     /**
      * The attributes that are mass assignable.
      *
@@ -26,6 +31,7 @@ class StrategyBacktestRun extends Model
         'started_at',
         'completed_at',
         'starting_capital',
+        'source_scope',
         'status',
         'notes',
     ];
