@@ -32,8 +32,9 @@ class StrategyBacktestService
      * - from: nullable Carbon/date-compatible lower bound for simulated_trades.entry_triggered_at.
      * - starting_capital: nullable decimal-compatible override for non-incremental runs.
      * - incremental: boolean; when true, skips trades already processed for the strategy in any run.
+     * - source_scope: telegram, coindcx, or all; null preserves legacy Telegram-only selection.
      *
-     * @param  array{strategy_code?: ?string, from?: mixed, starting_capital?: mixed, incremental?: bool}  $options
+     * @param  array{strategy_code?: ?string, from?: mixed, starting_capital?: mixed, incremental?: bool, source_scope?: ?string}  $options
      * @return array<string, mixed>
      */
     public function run(StrategyBacktestRun $run, array $options = []): array
@@ -175,18 +176,34 @@ class StrategyBacktestService
 
     private function loadEligibleTrades(mixed $from, StrategyDefinition $strategy, StrategyBacktestRun $run, bool $incremental): Collection
     {
+        $sourceScope = $this->resolveSourceScope($run);
+
         return SimulatedTrade::query()
             ->with([
                 'tradeSignal:id,trader_name,signal_source,symbol,direction,stop_loss,tp1,tp2,tp3,tp4',
                 'trackingEvents' => fn ($query) => $query->orderBy('event_timestamp')->orderBy('id'),
             ])
             ->whereNotNull('entry_triggered_at')
-            ->when(! $incremental, function ($query): void {
-                $query->whereHas('tradeSignal', fn ($query) => $query
-                    ->where(fn ($query) => $query
-                        ->whereNull('signal_source')
-                        ->orWhere('signal_source', '')
-                        ->orWhere('signal_source', TradeSignal::SOURCE_TELEGRAM)));
+            ->whereHas('tradeSignal', function ($query) use ($sourceScope, $strategy): void {
+                $query->where(function ($query) use ($sourceScope, $strategy): void {
+                    if ($sourceScope === StrategyBacktestRun::SOURCE_SCOPE_TELEGRAM) {
+                        $this->applyTelegramSignalBranch($query);
+
+                        return;
+                    }
+
+                    if ($sourceScope === StrategyBacktestRun::SOURCE_SCOPE_COINDCX) {
+                        $this->applyCoinDcxSignalBranch($query, $strategy);
+
+                        return;
+                    }
+
+                    $query->where(function ($query): void {
+                        $this->applyTelegramSignalBranch($query);
+                    })->orWhere(function ($query) use ($strategy): void {
+                        $this->applyCoinDcxSignalBranch($query, $strategy);
+                    });
+                });
             })
             ->when($from !== null, fn ($query) => $query->where('entry_triggered_at', '>=', $this->date($from)))
             ->whereNotExists(function ($query) use ($strategy, $run, $incremental): void {
@@ -199,6 +216,58 @@ class StrategyBacktestService
             ->orderBy('entry_triggered_at')
             ->orderBy('id')
             ->get();
+    }
+
+    private function resolveSourceScope(StrategyBacktestRun $run): string
+    {
+        return in_array($run->source_scope, [
+            StrategyBacktestRun::SOURCE_SCOPE_TELEGRAM,
+            StrategyBacktestRun::SOURCE_SCOPE_COINDCX,
+            StrategyBacktestRun::SOURCE_SCOPE_ALL,
+        ], true) ? $run->source_scope : StrategyBacktestRun::SOURCE_SCOPE_TELEGRAM;
+    }
+
+    private function applyTelegramSignalBranch($query): void
+    {
+        $query->where(function ($query): void {
+            $query->whereNull('signal_source')
+                ->orWhere('signal_source', '')
+                ->orWhere('signal_source', TradeSignal::SOURCE_TELEGRAM);
+        });
+    }
+
+    private function applyCoinDcxSignalBranch($query, StrategyDefinition $strategy): void
+    {
+        $query->where('signal_source', TradeSignal::SOURCE_COINDCX)
+            ->whereNotNull('stop_loss')
+            ->whereNotNull('tp1')
+            ->where(function ($query): void {
+                $query->whereNull('tp2')->orWhere('tp2', '');
+            })
+            ->where(function ($query): void {
+                $query->whereNull('tp3')->orWhere('tp3', '');
+            })
+            ->where(function ($query): void {
+                $query->whereNull('tp4')->orWhere('tp4', '');
+            });
+
+        if ($strategy->strategy_type === 'TARGET_BEFORE_STOP') {
+            if (in_array($strategy->target_event_type, [
+                'TP2_HIT',
+                'TP3_HIT',
+                'TP4_HIT',
+            ], true) || blank($strategy->target_event_type) || blank($strategy->stop_event_type)) {
+                $query->whereRaw('1 = 0');
+            }
+
+            return;
+        }
+
+        if ($strategy->strategy_type === 'RECOVERY_HOLD' && $strategy->target_event_type === 'TP1_HIT') {
+            return;
+        }
+
+        $query->whereRaw('1 = 0');
     }
 
     private function hasExistingResult(StrategyDefinition $strategy, StrategyBacktestRun $run, SimulatedTrade $trade, bool $incremental): bool

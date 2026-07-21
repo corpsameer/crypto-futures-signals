@@ -19,6 +19,7 @@ class BacktestStrategies extends Command
         {--from= : Process trades whose actual entry-trigger time is on or after this date/time}
         {--capital=500 : Starting capital for a non-incremental backtest}
         {--strategy= : Process only the strategy with this exact code}
+        {--source=telegram : Signal source scope: telegram, coindcx, or all}
         {--reset : Delete prior results for the selected strategy scope before running}
         {--incremental : Process only trades not already processed for each strategy}
         {--force : Execute reset without interactive confirmation}';
@@ -39,6 +40,11 @@ class BacktestStrategies extends Command
 
         $incremental = (bool) $this->option('incremental');
         $reset = (bool) $this->option('reset');
+        $sourceScope = $this->validatedSourceScope();
+
+        if ($sourceScope === null) {
+            return self::FAILURE;
+        }
         $strategyCode = $this->option('strategy');
         $strategyCode = is_string($strategyCode) && $strategyCode !== '' ? $strategyCode : null;
 
@@ -57,7 +63,7 @@ class BacktestStrategies extends Command
             $this->warn('Incremental processing continues from each strategy current_capital; the --capital option will not reset strategy capital.');
         }
 
-        $this->printExecutionSummary($incremental, $strategyCode, $from, $capital, $reset);
+        $this->printExecutionSummary($incremental, $strategyCode, $from, $capital, $reset, $sourceScope);
 
         if ($reset && ! $this->confirmReset($strategyCode, $strategies)) {
             $this->info('Reset declined. No results were deleted and no backtest run was created.');
@@ -76,8 +82,9 @@ class BacktestStrategies extends Command
             'started_at' => $now,
             'completed_at' => null,
             'starting_capital' => $capital,
+            'source_scope' => $sourceScope,
             'status' => StrategyBacktestRun::STATUS_RUNNING,
-            'notes' => $this->initialNotes($incremental, $strategyCode, $from, $reset),
+            'notes' => $this->initialNotes($incremental, $strategyCode, $from, $reset, $sourceScope),
         ]);
 
         $this->line('Backtest Run ID: '.$run->getKey());
@@ -89,6 +96,7 @@ class BacktestStrategies extends Command
                 'from' => $from ?: null,
                 'starting_capital' => $capital,
                 'incremental' => $incremental,
+                'source_scope' => $sourceScope,
             ]);
 
             $completedAt = now();
@@ -116,6 +124,7 @@ class BacktestStrategies extends Command
                 'strategy_code' => $strategyCode,
                 'incremental' => $incremental,
                 'reset' => $reset,
+                'source_scope' => $sourceScope,
                 'exception' => $exception,
             ]);
 
@@ -170,6 +179,24 @@ class BacktestStrategies extends Command
         }
     }
 
+
+    private function validatedSourceScope(): ?string
+    {
+        $sourceScope = $this->option('source') ?? StrategyBacktestRun::SOURCE_SCOPE_TELEGRAM;
+
+        if (! is_string($sourceScope) || ! in_array($sourceScope, [
+            StrategyBacktestRun::SOURCE_SCOPE_TELEGRAM,
+            StrategyBacktestRun::SOURCE_SCOPE_COINDCX,
+            StrategyBacktestRun::SOURCE_SCOPE_ALL,
+        ], true)) {
+            $this->error('The --source option must be one of: telegram, coindcx, all.');
+
+            return null;
+        }
+
+        return $sourceScope;
+    }
+
     private function validatedStrategies(?string $strategyCode): mixed
     {
         $query = StrategyDefinition::query()->where('is_active', true)->orderBy('id');
@@ -193,13 +220,14 @@ class BacktestStrategies extends Command
         return collect($_SERVER['argv'] ?? [])->contains(fn (string $argument): bool => $argument === '--capital' || str_starts_with($argument, '--capital='));
     }
 
-    private function printExecutionSummary(bool $incremental, ?string $strategyCode, Carbon|null $from, string $capital, bool $reset): void
+    private function printExecutionSummary(bool $incremental, ?string $strategyCode, Carbon|null $from, string $capital, bool $reset, string $sourceScope): void
     {
         $this->info('Strategy backtest configuration:');
         $this->line('Mode: '.($incremental ? 'Incremental' : 'Full'));
         $this->line('Strategy: '.($strategyCode ?? 'All Active'));
         $this->line('From: '.($from ? $from->toDateTimeString().' '.$from->getTimezone()->getName() : 'All Eligible Trades'));
         $this->line('Starting Capital: '.($incremental ? 'current_capital per strategy' : $capital));
+        $this->line('Source Scope: '.$sourceScope);
         $this->line('Reset: '.($reset ? 'Yes' : 'No'));
         $this->newLine();
     }
@@ -239,12 +267,13 @@ class BacktestStrategies extends Command
         return ($incremental ? 'Incremental' : 'Full').' Strategy Backtest - '.$timestamp->toDateTimeString();
     }
 
-    private function initialNotes(bool $incremental, ?string $strategyCode, Carbon|null $from, bool $reset): string
+    private function initialNotes(bool $incremental, ?string $strategyCode, Carbon|null $from, bool $reset, string $sourceScope): string
     {
         $notes = [
             'mode='.($incremental ? 'incremental' : 'full'),
             'strategy='.($strategyCode ?? 'all active strategies'),
             'from='.($from ? $from->toDateTimeString().' '.$from->getTimezone()->getName() : 'all eligible trades'),
+            'source_scope='.$sourceScope,
             'reset='.($reset ? 'yes' : 'no'),
         ];
 

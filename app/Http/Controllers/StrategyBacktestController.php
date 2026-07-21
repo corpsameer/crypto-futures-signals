@@ -11,6 +11,16 @@ use Illuminate\View\View;
 
 class StrategyBacktestController extends Controller
 {
+    private function sourceScopeLabel(?string $sourceScope): string
+    {
+        return match ($sourceScope) {
+            StrategyBacktestRun::SOURCE_SCOPE_TELEGRAM => 'Telegram',
+            StrategyBacktestRun::SOURCE_SCOPE_COINDCX => 'CoinDCX Expert Pick',
+            StrategyBacktestRun::SOURCE_SCOPE_ALL => 'All Compatible Sources',
+            default => 'Legacy Telegram / pre-source-scope',
+        };
+    }
+
     private function normalizeSource(mixed $source): ?string
     {
         return in_array($source, [TradeSignal::SOURCE_TELEGRAM, TradeSignal::SOURCE_COINDCX], true) ? $source : null;
@@ -62,6 +72,7 @@ class StrategyBacktestController extends Controller
         return view('strategy-backtests.index', [
             'backtestRuns' => $backtestRuns,
             'filters' => $filters,
+            'sourceScopeLabel' => fn (?string $sourceScope): string => $this->sourceScopeLabel($sourceScope),
         ]);
     }
 
@@ -178,6 +189,7 @@ class StrategyBacktestController extends Controller
             'strategySummaries' => $strategySummaries,
             'results' => $results,
             'filters' => $filters,
+            'sourceScopeLabel' => $this->sourceScopeLabel($backtestRun->source_scope),
         ]);
     }
 }

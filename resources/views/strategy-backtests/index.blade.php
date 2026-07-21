@@ -68,6 +68,7 @@
                                 <th>Started At</th>
                                 <th>Completed At</th>
                                 <th>Starting Capital</th>
+                                <th>Source Scope</th>
                                 <th>Strategies</th>
                                 <th>Processed Trades</th>
                                 <th>Result Rows</th>
@@ -89,6 +90,7 @@
                                     <td class="text-nowrap">{{ $formatDate($run->started_at) }}</td>
                                     <td class="text-nowrap">{{ $formatDate($run->completed_at, 'Not completed') }}</td>
                                     <td>{{ $formatUsdt($run->starting_capital) }}</td>
+                                    <td><span class="badge text-bg-light border">{{ $sourceScopeLabel($run->source_scope) }}</span></td>
                                     <td>{{ number_format((int) $run->strategies_represented_count) }}</td>
                                     <td>{{ number_format((int) $run->processed_trades_count) }}</td>
                                     <td>{{ number_format((int) $run->result_rows_count) }}</td>

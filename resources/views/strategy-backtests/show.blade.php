@@ -66,6 +66,7 @@
                 'Started At' => $formatDate($backtestRun->started_at),
                 'Completed At' => $formatDate($backtestRun->completed_at, 'Not completed'),
                 'Starting Capital' => $formatUsdt($backtestRun->starting_capital),
+                'Source Scope' => $sourceScopeLabel,
                 'Created At' => $formatDate($backtestRun->created_at),
             ] as $label => $value)
                 <div class="col-md-6 col-xl-4"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">{{ $label }}</div><div class="fw-semibold">{{ $value }}</div></div></div>
