@@ -3,6 +3,11 @@
 @section('title', 'Paste Signal | Crypto Futures Signal Analyzer')
 
 @section('content')
+    @php
+        $selectedSignalSource = in_array(old('signal_source'), [\App\Models\TradeSignal::SOURCE_TELEGRAM, \App\Models\TradeSignal::SOURCE_COINDCX], true)
+            ? old('signal_source')
+            : \App\Models\TradeSignal::SOURCE_TELEGRAM;
+    @endphp
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
         <div>
             <h1 class="h3 mb-1">Paste Signal</h1>
@@ -24,8 +29,24 @@
 
     <div class="card metric-card">
         <div class="card-body">
-            <form method="POST" action="{{ route('cryptofuturesignals.signals.store') }}">
+            <form method="POST" action="{{ route('cryptofuturesignals.signals.store') }}" enctype="multipart/form-data" id="paste-signal-form">
                 @csrf
+
+                <div class="mb-3">
+                    <label for="signal_source" class="form-label">Signal Source <span class="text-danger">*</span></label>
+                    <select
+                        id="signal_source"
+                        name="signal_source"
+                        class="form-select @error('signal_source') is-invalid @enderror"
+                        required
+                    >
+                        <option value="{{ \App\Models\TradeSignal::SOURCE_TELEGRAM }}" @selected($selectedSignalSource === \App\Models\TradeSignal::SOURCE_TELEGRAM)>Telegram</option>
+                        <option value="{{ \App\Models\TradeSignal::SOURCE_COINDCX }}" @selected($selectedSignalSource === \App\Models\TradeSignal::SOURCE_COINDCX)>CoinDCX Expert Pick</option>
+                    </select>
+                    @error('signal_source')
+                        <div class="invalid-feedback">{{ $message }}</div>
+                    @enderror
+                </div>
 
                 <div class="mb-3">
                     <label for="trader_name" class="form-label">Trader Name / Channel Name</label>
@@ -42,7 +63,7 @@
                     @enderror
                 </div>
 
-                <div class="mb-4">
+                <div class="mb-4" id="telegram-signal-section">
                     <label for="raw_text" class="form-label">Raw Signal Text <span class="text-danger">*</span></label>
                     <textarea
                         id="raw_text"
@@ -57,11 +78,71 @@
                     @enderror
                 </div>
 
+                <div class="mb-4 d-none" id="coindcx-screenshot-section">
+                    <label for="source_image" class="form-label">CoinDCX Expert Pick Screenshot <span class="text-danger">*</span></label>
+                    <input
+                        type="file"
+                        id="source_image"
+                        name="source_image"
+                        accept="image/png,image/jpeg,image/webp"
+                        class="form-control @error('source_image') is-invalid @enderror"
+                        disabled
+                    >
+                    <div class="form-text">Upload a CoinDCX Expert Pick screenshot. CoinDCX screenshot parsing will be enabled in the next task.</div>
+                    @error('source_image')
+                        <div class="invalid-feedback">{{ $message }}</div>
+                    @enderror
+                </div>
+
+                <div class="alert alert-info d-none" id="coindcx-disabled-message" role="alert">
+                    CoinDCX screenshot parsing will be enabled in the next task.
+                </div>
+
                 <div class="d-flex flex-column flex-sm-row gap-2">
-                    <button type="submit" class="btn btn-primary">Save Signal</button>
+                    <button type="submit" class="btn btn-primary" id="paste-signal-submit">Save Signal</button>
                     <a href="{{ route('cryptofuturesignals.signals.index') }}" class="btn btn-outline-secondary">Back to Signals</a>
                 </div>
             </form>
         </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const sourceSelect = document.getElementById('signal_source');
+            const telegramSection = document.getElementById('telegram-signal-section');
+            const coindcxSection = document.getElementById('coindcx-screenshot-section');
+            const rawText = document.getElementById('raw_text');
+            const sourceImage = document.getElementById('source_image');
+            const submitButton = document.getElementById('paste-signal-submit');
+            const coindcxMessage = document.getElementById('coindcx-disabled-message');
+            const telegramSource = '{{ \App\Models\TradeSignal::SOURCE_TELEGRAM }}';
+            const coindcxSource = '{{ \App\Models\TradeSignal::SOURCE_COINDCX }}';
+
+            function updateSignalSourceFields() {
+                const selectedSource = [telegramSource, coindcxSource].includes(sourceSelect.value)
+                    ? sourceSelect.value
+                    : telegramSource;
+
+                sourceSelect.value = selectedSource;
+
+                const isTelegram = selectedSource === telegramSource;
+
+                telegramSection.classList.toggle('d-none', ! isTelegram);
+                coindcxSection.classList.toggle('d-none', isTelegram);
+                coindcxMessage.classList.toggle('d-none', isTelegram);
+
+                rawText.disabled = ! isTelegram;
+                rawText.required = isTelegram;
+
+                sourceImage.disabled = isTelegram;
+                sourceImage.required = ! isTelegram;
+
+                submitButton.disabled = ! isTelegram;
+            }
+
+            sourceSelect.addEventListener('change', updateSignalSourceFields);
+            window.addEventListener('pageshow', updateSignalSourceFields);
+            updateSignalSourceFields();
+        });
+    </script>
 @endsection

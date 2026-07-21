@@ -35,6 +35,19 @@ class PastedSignalController extends Controller
 
     public function store(Request $request, SignalParserService $parser): RedirectResponse
     {
+        $sourceValidated = $request->validate([
+            'signal_source' => ['nullable', 'in:'.TradeSignal::SOURCE_TELEGRAM.','.TradeSignal::SOURCE_COINDCX],
+            'trader_name' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $signalSource = $sourceValidated['signal_source'] ?? TradeSignal::SOURCE_TELEGRAM;
+
+        if ($signalSource === TradeSignal::SOURCE_COINDCX) {
+            return back()
+                ->withErrors(['signal_source' => 'CoinDCX screenshot parsing will be enabled in the next task.'])
+                ->withInput();
+        }
+
         $validated = $request->validate([
             'trader_name' => ['nullable', 'string', 'max:255'],
             'raw_text' => ['required', 'string', 'min:10'],
