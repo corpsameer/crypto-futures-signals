@@ -96,6 +96,7 @@
             <div class="row g-3">
                 <div class="col-md-2"><div class="text-muted small">Symbol</div><div class="fw-semibold">{{ $display($tradeSignal->symbol) }}</div></div>
                 <div class="col-md-2"><div class="text-muted small">Pair</div><div class="fw-semibold">{{ $display($tradeSignal->pair) }}</div></div>
+                <div class="col-md-2"><div class="text-muted small">Source</div><x-signal-source-badge :source="$tradeSignal" /></div>
                 <div class="col-md-2">
                     <div class="text-muted small">Direction</div>
                     <span class="badge {{ $directionBadgeClasses[$tradeSignal->direction] ?? 'text-bg-secondary' }}">{{ $display($tradeSignal->direction) }}</span>
@@ -116,6 +117,7 @@
         </div>
         <div class="card-body">
             <dl class="row mb-0">
+                <dt class="col-md-3">Source</dt><dd class="col-md-3"><x-signal-source-badge :source="$tradeSignal" /></dd>
                 <dt class="col-md-3">Exchange</dt><dd class="col-md-3">{{ $display($tradeSignal->exchange) }}</dd>
                 <dt class="col-md-3">Market Type</dt><dd class="col-md-3">{{ $display($tradeSignal->market_type) }}</dd>
                 <dt class="col-md-3">Direction</dt><dd class="col-md-3">{{ $display($tradeSignal->direction) }}</dd>

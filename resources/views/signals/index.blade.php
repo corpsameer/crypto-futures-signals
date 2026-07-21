@@ -67,7 +67,9 @@
                                             <span class="badge text-bg-secondary">Not Saved</span>
                                         @endif
                                     </td>
-                                    <td>{{ $signal->source }}</td>
+                                    <td>
+                                        <x-signal-source-badge :source="$signal->latestTradeSignal?->signal_source" />
+                                    </td>
                                     <td class="text-break" style="white-space: pre-line; max-width: 32rem;">{{ \Illuminate\Support\Str::limit($signal->raw_text, 120) }}</td>
                                     <td>
                                         <div class="d-flex flex-column gap-2">

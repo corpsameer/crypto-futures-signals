@@ -125,7 +125,7 @@ class StrategyBacktestController extends Controller
         });
 
         $results = StrategyTradeResult::query()
-            ->with('strategyDefinition:id,name,code')
+            ->with(['strategyDefinition:id,name,code', 'tradeSignal:id,signal_source'])
             ->where('strategy_backtest_run_id', $runId)
             ->orderByRaw('entry_time IS NULL')
             ->orderBy('entry_time')

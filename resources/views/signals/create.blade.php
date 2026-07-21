@@ -102,14 +102,6 @@
                             @error('coindcx_leverage')<div class="invalid-feedback">{{ $message }}</div>@enderror
                         </div>
 
-                        <div class="col-md-6">
-                            <label for="coindcx_expected_profit" class="form-label">Expected Profit</label>
-                            <div class="input-group">
-                                <input type="number" min="0" step="any" id="coindcx_expected_profit" name="coindcx_expected_profit" value="{{ old('coindcx_expected_profit') }}" class="form-control @error('coindcx_expected_profit') is-invalid @enderror" placeholder="18" disabled>
-                                <span class="input-group-text">%</span>
-                                @error('coindcx_expected_profit')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                            </div>
-                        </div>
 
                         <div class="col-md-6">
                             <label for="coindcx_entry_price_1" class="form-label">Entry Price 1 <span class="text-danger">*</span></label>

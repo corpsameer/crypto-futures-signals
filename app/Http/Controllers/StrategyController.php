@@ -103,6 +103,7 @@ class StrategyController extends Controller
             ->get();
 
         $ledgerResults = $this->applyFilters($this->canonicalResultsQuery($strategy), $filters)
+            ->with('tradeSignal:id,signal_source')
             ->orderByDesc('strategy_trade_results.entry_time')
             ->orderByDesc('strategy_trade_results.simulated_trade_id')
             ->orderByDesc('strategy_trade_results.id')

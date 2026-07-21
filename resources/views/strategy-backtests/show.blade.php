@@ -98,7 +98,7 @@
         @if ($results->count() === 0)
             <div class="p-5 text-center text-muted">No processed strategy result rows are linked to this backtest run.</div>
         @else
-            <div class="table-responsive"><table class="table table-sm table-striped table-hover align-middle mb-0"><thead class="table-light"><tr><th>Strategy</th><th>Entry Time</th><th>Symbol</th><th>Direction</th><th>Trader</th><th>Result</th><th>Exit Event</th><th>Net P&amp;L</th><th>Capital Before</th><th>Capital After</th></tr></thead><tbody>
+            <div class="table-responsive"><table class="table table-sm table-striped table-hover align-middle mb-0"><thead class="table-light"><tr><th>Strategy</th><th>Entry Time</th><th>Symbol</th><th>Source</th><th>Direction</th><th>Trader</th><th>Result</th><th>Exit Event</th><th>Net P&amp;L</th><th>Capital Before</th><th>Capital After</th></tr></thead><tbody>
                 @foreach ($results as $result)
                     @php($direction = strtoupper(trim((string) $result->direction)))
                     @php($exitEvent = trim((string) $result->exit_event_type) !== '' ? $result->exit_event_type : ($result->result_status === 'open' ? 'No exit yet' : 'N/A'))
@@ -106,6 +106,7 @@
                         <td>@if ($result->strategyDefinition)<div class="fw-semibold">{{ $result->strategyDefinition->name }}</div><div class="small text-muted">{{ $result->strategyDefinition->code }}</div>@else <span class="fw-semibold">Unknown strategy #{{ $result->strategy_definition_id }}</span> @endif</td>
                         <td class="text-nowrap">{{ $formatDate($result->entry_time) }}</td>
                         <td class="fw-semibold">{{ strtoupper($na($result->symbol)) }}</td>
+                        <td><x-signal-source-badge :source="$result->tradeSignal?->signal_source ?? 'unknown'" /></td>
                         <td><span class="badge {{ $directionBadgeClasses[$direction] ?? 'text-bg-secondary' }}">{{ $direction === '' ? 'N/A' : $direction }}</span></td>
                         <td>{{ $na($result->trader_name, 'Unknown') }}</td>
                         <td><span class="badge {{ $resultBadgeClasses[$result->result_status] ?? 'text-bg-secondary' }}">{{ strtoupper($na($result->result_status, 'unknown')) }}</span></td>

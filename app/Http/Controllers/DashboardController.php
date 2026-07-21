@@ -52,8 +52,25 @@ class DashboardController extends Controller
             'best_market_condition' => $this->bestMarketCondition($userId),
         ];
 
+        $recentSignals = TradeSignal::query()
+            ->where('user_id', $userId)
+            ->orderByDesc('signal_time')
+            ->orderByDesc('created_at')
+            ->limit(5)
+            ->get();
+
+        $recentTrades = SimulatedTrade::query()
+            ->with('tradeSignal:id,signal_source,pair')
+            ->where('user_id', $userId)
+            ->orderByDesc('entry_triggered_at')
+            ->orderByDesc('created_at')
+            ->limit(5)
+            ->get();
+
         return view('dashboard', [
             'summary' => $summary,
+            'recentSignals' => $recentSignals,
+            'recentTrades' => $recentTrades,
         ]);
     }
 

@@ -148,18 +148,49 @@ class TradeSignal extends Model
                 && $this->entry_min != $this->entry_max);
     }
 
+    public static function sourceLabel(?string $source): string
+    {
+        return match ($source) {
+            self::SOURCE_TELEGRAM, null, '' => 'Telegram',
+            self::SOURCE_COINDCX => 'CoinDCX Expert Pick',
+            default => 'Unknown',
+        };
+    }
+
+    public static function sourceBadgeClass(?string $source): string
+    {
+        return match ($source) {
+            self::SOURCE_TELEGRAM, null, '' => 'text-bg-info',
+            self::SOURCE_COINDCX => 'text-bg-primary',
+            default => 'text-bg-secondary',
+        };
+    }
+
+    public function getSourceLabelAttribute(): string
+    {
+        return self::sourceLabel($this->signal_source);
+    }
+
+    public function getSourceBadgeClassAttribute(): string
+    {
+        return self::sourceBadgeClass($this->signal_source);
+    }
+
     public function getEntryDisplayAttribute(): string
     {
         if ($this->hasEntryRange()) {
-            return ($this->entry_price_min ?? $this->entry_min).' - '.($this->entry_price_max ?? $this->entry_max);
+            $minimum = $this->entry_price_min ?? $this->entry_min;
+            $maximum = $this->entry_price_max ?? $this->entry_max;
+
+            if ($minimum !== null && $maximum !== null) {
+                return $minimum.' – '.$maximum;
+            }
         }
 
-        if ($this->entry_min !== null) {
-            return (string) $this->entry_min;
-        }
-
-        if ($this->entry_max !== null) {
-            return (string) $this->entry_max;
+        foreach (['entry_price', 'entry_price_min', 'entry_min', 'entry_price_max', 'entry_max'] as $field) {
+            if ($this->{$field} !== null) {
+                return (string) $this->{$field};
+            }
         }
 
         return 'N/A';
