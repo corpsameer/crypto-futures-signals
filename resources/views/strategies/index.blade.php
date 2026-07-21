@@ -44,6 +44,14 @@
         </div>
     </div>
 
+    @include('strategies.partials.filters', [
+        'action' => route('cryptofuturesignals.strategies.index'),
+        'clearUrl' => route('cryptofuturesignals.strategies.index'),
+        'filters' => $filters,
+        'filterOptions' => $filterOptions,
+        'filtersActive' => $filtersActive,
+    ])
+
     @if ($summaries->isEmpty())
         <div class="card metric-card">
             <div class="card-body p-5 text-center">
@@ -82,8 +90,11 @@
                         <div class="row g-3 mb-4">
                             <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Starting Capital</div><div class="fs-5 fw-semibold">{{ $formatUsdt($summary['starting_capital']) }}</div></div></div>
                             <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Current Capital</div><div class="fs-5 fw-semibold">{{ $formatUsdt($summary['current_capital']) }}</div></div></div>
-                            <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Net P&amp;L</div><div class="fs-5 fw-semibold {{ $valueClass($summary['net_pnl']) }}">{{ $formatSignedUsdt($summary['net_pnl']) }}</div></div></div>
-                            <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Return</div><div class="fs-5 fw-semibold {{ $valueClass($summary['return_percent']) }}">{{ $formatPercent($summary['return_percent']) }}</div></div></div>
+                            <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">{{ $filtersActive ? 'Account Net P&L' : 'Net P&L' }}</div><div class="fs-5 fw-semibold {{ $valueClass($summary['net_pnl']) }}">{{ $formatSignedUsdt($summary['net_pnl']) }}</div></div></div>
+                            <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">{{ $filtersActive ? 'Account Return' : 'Return' }}</div><div class="fs-5 fw-semibold {{ $valueClass($summary['return_percent']) }}">{{ $formatPercent($summary['return_percent']) }}</div></div></div>
+                            @if ($filtersActive)
+                                <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Filtered Net P&amp;L</div><div class="fs-5 fw-semibold {{ $valueClass($summary['filtered_net_pnl']) }}">{{ $formatSignedUsdt($summary['filtered_net_pnl']) }}</div></div></div>
+                            @endif
                         </div>
 
                         <div class="table-responsive mb-4">
