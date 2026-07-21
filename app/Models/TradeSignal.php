@@ -17,6 +17,9 @@ class TradeSignal extends Model
 
     public const MARKET_TYPE_FUTURES = 'futures';
 
+    public const SOURCE_TELEGRAM = 'telegram';
+    public const SOURCE_COINDCX = 'coindcx';
+
     public const STATUS_PENDING_ENTRY = 'pending_entry';
     public const STATUS_ENTRY_TRIGGERED = 'entry_triggered';
     public const STATUS_ENTRY_MISSED = 'entry_missed';
@@ -37,6 +40,8 @@ class TradeSignal extends Model
         'pasted_signal_id',
         'user_id',
         'trader_name',
+        'signal_source',
+        'source_image_path',
         'exchange',
         'symbol',
         'pair',
