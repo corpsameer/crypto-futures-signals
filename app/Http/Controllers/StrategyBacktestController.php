@@ -9,6 +9,36 @@ use Illuminate\View\View;
 
 class StrategyBacktestController extends Controller
 {
+    public function index(): View
+    {
+        $backtestRuns = StrategyBacktestRun::query()
+            ->select('strategy_backtest_runs.*')
+            ->withCount('tradeResults as result_rows_count')
+            ->selectSub(function ($query): void {
+                $query->from('strategy_trade_results')
+                    ->selectRaw('COUNT(DISTINCT strategy_definition_id)')
+                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id');
+            }, 'strategies_represented_count')
+            ->selectSub(function ($query): void {
+                $query->from('strategy_trade_results')
+                    ->selectRaw('COUNT(DISTINCT simulated_trade_id)')
+                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id');
+            }, 'processed_trades_count')
+            ->selectSub(function ($query): void {
+                $query->from('strategy_trade_results')
+                    ->selectRaw('COALESCE(SUM(net_pnl), 0)')
+                    ->whereColumn('strategy_trade_results.strategy_backtest_run_id', 'strategy_backtest_runs.id');
+            }, 'total_net_pnl')
+            ->orderByDesc('started_at')
+            ->orderByDesc('id')
+            ->paginate(25)
+            ->withQueryString();
+
+        return view('strategy-backtests.index', [
+            'backtestRuns' => $backtestRuns,
+        ]);
+    }
+
     public function show(StrategyBacktestRun $backtestRun): View
     {
         $runId = $backtestRun->getKey();

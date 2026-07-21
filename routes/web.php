@@ -36,7 +36,8 @@ Route::prefix('cryptofuturesignals')
                 Route::get('/logs', [SystemLogController::class, 'index'])->name('logs.index');
             });
 
-        Route::middleware('auth')
-            ->get('/strategy-backtests/{backtestRun}', [StrategyBacktestController::class, 'show'])
-            ->name('strategy-backtests.show');
+        Route::middleware('auth')->group(function (): void {
+            Route::get('/strategy-backtests', [StrategyBacktestController::class, 'index'])->name('strategy-backtests.index');
+            Route::get('/strategy-backtests/{backtestRun}', [StrategyBacktestController::class, 'show'])->name('strategy-backtests.show');
+        });
     });

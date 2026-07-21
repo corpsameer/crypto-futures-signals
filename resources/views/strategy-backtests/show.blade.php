@@ -33,7 +33,7 @@
 
     <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-4">
         <div>
-            <div class="mb-2"><a href="{{ route('cryptofuturesignals.strategies.index') }}" class="text-decoration-none">&larr; Back to Strategies</a></div>
+            <div class="mb-2 d-flex flex-wrap gap-3"><a href="{{ route('strategy-backtests.index') }}" class="text-decoration-none">&larr; Back to Backtest Runs</a><a href="{{ route('cryptofuturesignals.strategies.index') }}" class="text-decoration-none">Back to Strategies</a></div>
             <h1 class="h3 mb-1">Strategy Backtest Run #{{ $backtestRun->id }}</h1>
             <p class="text-muted mb-0">Run-specific historical strategy results. No canonical cross-run replacement is applied.</p>
         </div>
